@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 import json
+import requests
 
 app = Flask(__name__)
 
@@ -19,6 +20,26 @@ def webhook():
     print("========================")
 
     print(json.dumps(data, indent=4))
+
+    # Get the utility bill URL
+    bill_url = data.get("utility_bill_url")
+
+    if bill_url:
+        try:
+            response = requests.get(bill_url, timeout=30)
+
+            print("\n========================")
+            print("UTILITY BILL DOWNLOAD")
+            print("========================")
+            print("Status code:", response.status_code)
+            print("File size:", len(response.content), "bytes")
+            print("Content type:", response.headers.get("Content-Type"))
+
+        except Exception as e:
+            print("Error downloading utility bill:", str(e))
+
+    else:
+        print("No utility bill URL received.")
 
     return jsonify({
         "status": "success"
