@@ -22,8 +22,10 @@ def webhook():
     print(json.dumps(data, indent=4))
 
     # Get the utility bill URL
+    print("BILL VALUE:", 
+    repr(data.get("utility_bill_url")))
     bill_url = data.get("utility_bill_url")
-
+  
     if bill_url:
         try:
             response = requests.get(bill_url, timeout=30)
