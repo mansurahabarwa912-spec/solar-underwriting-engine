@@ -1,14 +1,20 @@
 from flask import Flask, request, jsonify
+from openai import OpenAI
+import os
 import json
 import requests
+import tempfile
 
 app = Flask(__name__)
 
+client = OpenAI(
+    api_key=os.environ.get("OPENAI_API_KEY")
+)
+
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({
-        "status": "online"
-    })
+    return jsonify({"status": "online"})
+
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -21,31 +27,78 @@ def webhook():
 
     print(json.dumps(data, indent=4))
 
-    # Get the utility bill URL
-    print("BILL VALUE:", 
-    repr(data.get("customData", {}).get("utility_bill_url")))
     bill_url = data.get("customData", {}).get("utility_bill_url")
 
-    if bill_url:
-        try:
-            response = requests.get(bill_url, timeout=30)
-
-            print("\n========================")
-            print("UTILITY BILL DOWNLOAD")
-            print("========================")
-            print("Status code:", response.status_code)
-            print("File size:", len(response.content), "bytes")
-            print("Content type:", response.headers.get("Content-Type"))
-
-        except Exception as e:
-            print("Error downloading utility bill:", str(e))
-
-    else:
+    if not bill_url:
         print("No utility bill URL received.")
 
-    return jsonify({
-        "status": "success"
-    })
+        return jsonify({"status": "success"})
+
+    try:
+
+        response = requests.get(bill_url, timeout=30)
+
+        print("\n========================")
+        print("UTILITY BILL DOWNLOAD")
+        print("========================")
+        print("Status code:", response.status_code)
+
+        with tempfile.NamedTemporaryFile(
+            suffix=".pdf",
+            delete=False
+        ) as temp_file:
+
+            temp_file.write(response.content)
+
+            pdf_path = temp_file.name
+
+        uploaded_file = client.files.create(
+            file=open(pdf_path, "rb"),
+            purpose="user_data"
+        )
+
+        result = client.responses.create(
+            model="gpt-4.1",
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_file",
+                            "file_id": uploaded_file.id
+                        },
+                        {
+                            "type": "input_text",
+                            "text": """
+Extract the following fields from this utility bill.
+
+Return ONLY valid JSON.
+
+{
+    "utility_provider": "",
+    "annual_kwh_usage": "",
+    "peak_demand_kw": "",
+    "billing_period": ""
+}
+"""
+                        }
+                    ]
+                }
+            ]
+        )
+
+        print("\n========================")
+        print("AI EXTRACTION")
+        print("========================")
+
+        print(result.output_text)
+
+    except Exception as e:
+
+        print("ERROR:", str(e))
+
+    return jsonify({"status": "success"})
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
