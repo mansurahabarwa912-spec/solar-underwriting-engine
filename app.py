@@ -187,6 +187,17 @@ If a value cannot be found, return an empty string.
         print("========================")
 
         print(result.output_text)
+        contact_id = custom_data.get("contact_id")
+
+        print("\n========================")
+        print("CONTACT ID")
+        print("========================")
+        print(contact_id)
+        print("\n========================")
+        print("GHL ENVIRONMENT")
+        print("========================")
+        print("API key found:", bool(os.environ.get("GHL_API_KEY")))
+        print("Location ID found:", bool(os.environ.get("GHL_LOCATION_ID")))
 
 
         # Try to convert AI response to JSON
@@ -242,3 +253,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=10000
     )
+    
