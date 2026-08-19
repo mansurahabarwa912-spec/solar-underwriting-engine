@@ -224,7 +224,46 @@ If a value cannot be found, return an empty string.
                 indent=4
             )
         )
+  # Update AI custom fields in GHL
+        ghl_api_key = os.environ.get("GHL_API_KEY")
+        ghl_location_id = os.environ.get("GHL_LOCATION_ID")
 
+        if contact_id and ghl_api_key:
+
+            ghl_url = f"https://services.leadconnectorhq.com/contacts/{contact_id}"
+
+            ghl_headers = {
+                "Authorization": f"Bearer {ghl_api_key}",
+                "Version": "2021-07-28",
+                "Content-Type": "application/json"
+            }
+
+            ghl_payload = {
+                "locationId": ghl_location_id,
+                "customFields": {
+                    "QlceeYQHWz79JpC3RfHG": extracted_data.get("utility_provider", ""),
+                    "nxlJKpBjr5vFXpsDt86M": extracted_data.get("annual_kwh_usage", ""),
+                    "bJexeasg4bhJN9vZuC6C": extracted_data.get("billing_period", ""),
+                    "ESOf9cNFnZXFkgTvAL4o": extracted_data.get("peak_demand_kw", "")
+                }
+            }
+
+            ghl_response = requests.put(
+                ghl_url,
+                headers=ghl_headers,
+                json=ghl_payload,
+                timeout=30
+            )
+
+            print("\n========================")
+            print("GHL CONTACT UPDATE")
+            print("========================")
+
+            print("Status code:", ghl_response.status_code)
+            print("Response:", ghl_response.text)
+
+        else:
+            print("Missing Contact ID or GHL API key")
 
         return jsonify({
             "status": "success",
