@@ -238,14 +238,33 @@ If a value cannot be found, return an empty string.
                 "Content-Type": "application/json"
             }
 
-            {
-                "locationId": ghl_location_id,
-                "customFields": {
-                    "QlceeYQHWz79JpC3RfHG": extracted_data.get("utility_provider", ""),
-                    "nxlJKpBjr5vFXpsDt86M": extracted_data.get("annual_kwh_usage", ""),
-                    "bJexeasg4bhJN9vZuC6C": extracted_data.get("billing_period", ""),
-                    "ESOf9cNFnZXFkgTvAL4o": extracted_data.get("peak_demand_kw", "")
-                }
+            ghl_payload = {
+                "customFields": [
+                    {
+                        "id": "QlceeYQHWz79JpC3RfHG",
+                        "fieldValue": extracted_data.get(
+                            "utility_provider", ""
+                        )
+                    },
+                    {
+                        "id": "nxlJKpBjr5vFXpsDt86M",
+                        "fieldValue": extracted_data.get(
+                            "annual_kwh_usage", ""
+                        )
+                    },
+                    {
+                        "id": "bJexeasg4bhJN9vZuC6C",
+                        "fieldValue": extracted_data.get(
+                            "billing_period", ""
+                        )
+                    },
+                    {
+                        "id": "ESOf9cNFnZXFkgTvAL4o",
+                        "fieldValue": extracted_data.get(
+                            "peak_demand_kw", ""
+                        )
+                    }
+                ]
             }
 
             ghl_response = requests.put(
@@ -292,4 +311,3 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=10000
     )
-    
