@@ -238,7 +238,7 @@ If a value cannot be found, return an empty string.
                 "Content-Type": "application/json"
             }
 
-            ghl_payload = {
+            {
                 "locationId": ghl_location_id,
                 "customFields": {
                     "QlceeYQHWz79JpC3RfHG": extracted_data.get("utility_provider", ""),
