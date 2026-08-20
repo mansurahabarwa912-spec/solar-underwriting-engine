@@ -225,6 +225,51 @@ If a value cannot be found, return an empty string.
                 indent=4
             )
         )
+        # Convert property address to coordinates
+        property_address = extracted_data.get(
+            "property_address",
+            ""
+        )
+
+        latitude = ""
+        longitude = ""
+
+        if property_address:
+            google_api_key = os.environ.get(
+                "GOOGLE_MAPS_API_KEY"
+            )
+
+            geocode_url = (
+                "https://maps.googleapis.com/maps/api/geocode/json"
+            )
+
+            geocode_response = requests.get(
+                geocode_url,
+                params={
+                    "address": property_address,
+                    "key": google_api_key
+                },
+                timeout=30
+            )
+
+            geocode_data = geocode_response.json()
+
+            if (
+                geocode_data.get("status") == "OK"
+                and geocode_data.get("results")
+            ):
+                location = geocode_data["results"][0]["geometry"]["location"]
+
+                latitude = location.get("lat", "")
+                longitude = location.get("lng", "")
+
+        print("\n========================")
+        print("PROPERTY COORDINATES")
+        print("========================")
+
+        print("Address:", property_address)
+        print("Latitude:", latitude)
+        print("Longitude:", longitude)
   # Update AI custom fields in GHL
         ghl_api_key = os.environ.get("GHL_API_KEY")
         ghl_location_id = os.environ.get("GHL_LOCATION_ID")
