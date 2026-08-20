@@ -162,6 +162,7 @@ Extract these fields:
 2. Annual electricity usage in kWh
 3. Peak demand in kW
 4. Billing period
+5. Property/service address
 
 Return ONLY valid JSON in exactly this format:
 
@@ -262,6 +263,12 @@ If a value cannot be found, return an empty string.
                         "id": "ESOf9cNFnZXFkgTvAL4o",
                         "fieldValue": extracted_data.get(
                             "peak_demand_kw", ""
+                        )
+                    },
+                    {
+                        "id": "EoeFaBKcFly95M8DGYzH",
+                        "fieldValue": extracted_data.get(
+                            "property_address", ""
                         )
                     }
                 ]
