@@ -270,11 +270,18 @@ If a value cannot be found, return an empty string.
         print("Address:", property_address)
         print("Latitude:", latitude)
         print("Longitude:", longitude)
-        "JyVh0mZcc8qrgsZoabzTR378eQP4g0jkKd4d7WQp"
+
         # Get baseline solar production estimate from NREL PVWatts
         nrel_api_key = os.environ.get("NREL_API_KEY")
 
         pvwatts_data = {}
+
+        print("\n========================")
+        print("PVWATTS CHECK")
+        print("========================")
+        print("Latitude:", latitude)
+        print("Longitude:", longitude)
+        print("NREL API key found:", bool(nrel_api_key))
 
         if latitude and longitude and nrel_api_key:
 
