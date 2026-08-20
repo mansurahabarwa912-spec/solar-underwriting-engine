@@ -230,6 +230,7 @@ If a value cannot be found, return an empty string.
             "property_address",
             ""
         )
+        print("PROPERTY ADDRESS:", property_address)
 
         latitude = ""
         longitude = ""
