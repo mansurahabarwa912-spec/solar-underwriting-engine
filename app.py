@@ -270,6 +270,53 @@ If a value cannot be found, return an empty string.
         print("Address:", property_address)
         print("Latitude:", latitude)
         print("Longitude:", longitude)
+        # Get baseline solar production estimate from NREL PVWatts
+        nrel_api_key = os.environ.get("NREL_API_KEY")
+
+        pvwatts_data = {}
+
+        if latitude and longitude and nrel_api_key:
+
+            pvwatts_url = (
+                "https://developer.nrel.gov/api/pvwatts/v8.json"
+            )
+
+            pvwatts_params = {
+                "api_key": nrel_api_key,
+                "lat": latitude,
+                "lon": longitude,
+                "system_capacity": 1,
+                "azimuth": 180,
+                "tilt": 20,
+                "array_type": 1,
+                "module_type": 1,
+                "losses": 14
+            }
+
+            pvwatts_response = requests.get(
+                pvwatts_url,
+                params=pvwatts_params,
+                timeout=30
+            )
+
+            print("\n========================")
+            print("PVWATTS RESPONSE")
+            print("========================")
+
+            print(
+                "Status code:",
+                pvwatts_response.status_code
+            )
+
+            pvwatts_data = pvwatts_response.json()
+
+            print(
+                json.dumps(
+                    pvwatts_data,
+                    indent=4
+                )
+            )
+
   # Update AI custom fields in GHL
         ghl_api_key = os.environ.get("GHL_API_KEY")
         ghl_location_id = os.environ.get("GHL_LOCATION_ID")
