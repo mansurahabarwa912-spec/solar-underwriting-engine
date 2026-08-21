@@ -309,29 +309,35 @@ If a value cannot be found, return an empty string.
                 "losses": 14
             }
 
-            pvwatts_response = requests.get(
-                pvwatts_url,
-                params=pvwatts_params,
-                timeout=30
-            )
-
-            print("\n========================")
-            print("PVWATTS RESPONSE")
-            print("========================")
-
-            print(
-                "Status code:",
-                pvwatts_response.status_code
-            )
-
-            pvwatts_data = pvwatts_response.json()
-
-            print(
-                json.dumps(
-                    pvwatts_data,
-                    indent=4
+            try:
+                pvwatts_response = requests.get(
+                    pvwatts_url,
+                    params=pvwatts_params,
+                    timeout=30
                 )
-            )
+
+                print("\n========================")
+                print("PVWATTS RESPONSE")
+                print("========================")
+
+                print("Status code:", pvwatts_response.status_code)
+
+                pvwatts_data = pvwatts_response.json()
+
+                print(
+                    json.dumps(
+                        pvwatts_data,
+                        indent=4
+                    )
+                )
+
+            except requests.exceptions.RequestException as e:
+                print("\n========================")
+                print("PVWATTS CONNECTION ERROR")
+                print("========================")
+
+                print(str(e))
+                pvwatts_data = {}
 
   # Update AI custom fields in GHL
         ghl_api_key = os.environ.get("GHL_API_KEY")
