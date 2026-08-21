@@ -294,7 +294,7 @@ If a value cannot be found, return an empty string.
         if latitude and longitude and nrel_api_key:
 
             pvwatts_url = (
-                "https://developer.nrl.gov/api/pvwatts/v8.json"
+                "https://developer.nlr.gov/api/pvwatts/v8.json"
             )
 
             pvwatts_params = {
