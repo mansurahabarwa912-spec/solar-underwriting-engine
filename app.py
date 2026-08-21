@@ -291,7 +291,7 @@ If a value cannot be found, return an empty string.
         print("Longitude:", longitude)
         print("NREL API key found:", bool(nrel_api_key))
 
-        if latitude and longitude and nrel_api_key:
+        if latitude and longitude and nrel_api_key: # type: ignore
 
             pvwatts_url = (
                 "https://developer.nlr.gov/api/pvwatts/v8.json"
@@ -338,8 +338,91 @@ If a value cannot be found, return an empty string.
 
                 print(str(e))
                 pvwatts_data = {}
+         # ==========================================
+        # PRELIMINARY SOLAR SYSTEM SIZING
+        # ==========================================
 
-  # Update AI custom fields in GHL
+        annual_kwh_raw = extracted_data.get(
+            "annual_kwh_usage",
+            ""
+        )
+
+        peak_demand_raw = extracted_data.get(
+            "peak_demand_kw",
+            ""
+        )
+
+        preliminary_system_size_kw = None
+        annual_production_per_kw = None
+        estimated_annual_solar_kwh = None
+
+        try:
+            annual_kwh = float(
+                str(annual_kwh_raw).replace(",", "").strip()
+            )
+
+            peak_demand_kw = float(
+                str(peak_demand_raw).replace(",", "").strip()
+            )
+
+            annual_production_per_kw = float(
+                pvwatts_data
+                .get("outputs", {})
+                .get("ac_annual", 0)
+            )
+
+            if annual_kwh > 0 and annual_production_per_kw > 0:
+
+                preliminary_system_size_kw = (
+                    annual_kwh / annual_production_per_kw
+                )
+
+                estimated_annual_solar_kwh = (
+                    preliminary_system_size_kw
+                    * annual_production_per_kw
+                )
+
+        except (ValueError, TypeError):
+
+            print("Could not calculate preliminary system size.")
+
+
+        print("\n========================")
+        print("PRELIMINARY SYSTEM SIZING")
+        print("========================")
+
+        print(
+            "Annual usage:",
+            annual_kwh_raw,
+            "kWh"
+        )
+
+        print(
+            "Peak demand:",
+            peak_demand_raw,
+            "kW"
+        )
+
+        print(
+            "PVWatts production per kW:",
+            annual_production_per_kw,
+            "kWh/year"
+        )
+
+        print(
+            "Preliminary system size:",
+            preliminary_system_size_kw,
+            "kW"
+        )
+
+        print(
+            "Estimated annual solar production:",
+            estimated_annual_solar_kwh,
+            "kWh/year"
+        )
+
+
+        # Update AI custom fields in GHL
         ghl_api_key = os.environ.get("GHL_API_KEY")
         ghl_location_id = os.environ.get("GHL_LOCATION_ID")
 
@@ -432,3 +515,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=10000
     )
+
