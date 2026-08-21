@@ -255,6 +255,12 @@ If a value cannot be found, return an empty string.
             )
 
             geocode_data = geocode_response.json()
+            print("\n========================")
+            print("GOOGLE GEOCODING RESPONSE")
+            print("========================")
+            print("Status:", geocode_data.get("status"))
+            print("Error:", geocode_data.get("error_message", "None"))
+
 
             if (
                 geocode_data.get("status") == "OK"
