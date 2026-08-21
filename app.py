@@ -201,19 +201,30 @@ If a value cannot be found, return an empty string.
         print("API key found:", bool(os.environ.get("GHL_API_KEY")))
         print("Location ID found:", bool(os.environ.get("GHL_LOCATION_ID")))
 
-
-        # Try to convert AI response to JSON
+# Try to convert AI response to JSON
         try:
 
-            extracted_data = json.loads(
-                result.output_text
-            )
+            ai_text = result.output_text.strip()
 
-        except Exception:
+            # Remove markdown JSON fences if the AI included them
+            if ai_text.startswith("```"):
+                ai_text = ai_text.replace("```json", "")
+                ai_text = ai_text.replace("```", "")
+                ai_text = ai_text.strip()
 
-            extracted_data = {
-                "raw_ai_response": result.output_text
-            }
+            extracted_data = json.loads(ai_text)
+
+        except Exception as e:
+
+            print("\n========================")
+            print("JSON EXTRACTION ERROR")
+            print("========================")
+
+            print("Error:", str(e))
+            print("Raw AI response:", result.output_text)
+
+            extracted_data = {}
+
 
 
         print("\n========================")
@@ -515,4 +526,7 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=10000
     )
+
+
+    
 
