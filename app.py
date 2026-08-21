@@ -162,7 +162,7 @@ Extract these fields:
 2. Annual electricity usage in kWh
 3. Peak demand in kW
 4. Billing period
-5. Property/service address
+5. service address
 
 Return ONLY valid JSON in exactly this format:
 
@@ -170,7 +170,8 @@ Return ONLY valid JSON in exactly this format:
     "utility_provider": "",
     "annual_kwh_usage": "",
     "peak_demand_kw": "",
-    "billing_period": ""
+    "billing_period": "",
+    "property_address": ""
 }
 
 If a value cannot be found, return an empty string.
