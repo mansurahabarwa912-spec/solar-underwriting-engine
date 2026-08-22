@@ -433,7 +433,96 @@ If a value cannot be found, return an empty string.
             estimated_annual_solar_kwh,
             "kWh/year"
         )
+ # ==========================================
+        # PRELIMINARY FINANCIAL UNDERWRITING
+        # ==========================================
 
+        # Preliminary commercial solar cost assumption
+        # $/W can be changed later to match actual EPC pricing.
+        cost_per_watt = 1.50
+
+        estimated_project_cost = None
+        estimated_year_1_savings = None
+        simple_payback_years = None
+
+        if preliminary_system_size_kw is not None:
+
+            estimated_project_cost = (
+                preliminary_system_size_kw
+                * 1000
+                * cost_per_watt
+            )
+
+        # Use the extracted electricity rate
+        electricity_rate_raw = extracted_data.get(
+            "electricity_rate_per_kwh",
+            ""
+        )
+
+        try:
+
+            electricity_rate = float(
+                str(electricity_rate_raw)
+                .replace("$", "")
+                .replace(",", "")
+                .strip()
+            )
+
+            if (
+                estimated_annual_solar_kwh is not None
+                and electricity_rate > 0
+            ):
+
+                estimated_year_1_savings = (
+                    estimated_annual_solar_kwh
+                    * electricity_rate
+                )
+
+            if (
+                estimated_project_cost is not None
+                and estimated_year_1_savings is not None
+                and estimated_year_1_savings > 0
+            ):
+
+                simple_payback_years = (
+                    estimated_project_cost
+                    / estimated_year_1_savings
+                )
+
+        except (ValueError, TypeError):
+
+            print("Could not calculate financial underwriting.")
+
+
+        print("\n========================")
+        print("FINANCIAL UNDERWRITING")
+        print("========================")
+
+        print(
+            "Cost per watt:",
+            cost_per_watt
+        )
+
+        print(
+            "Estimated project cost:",
+            estimated_project_cost
+        )
+
+        print(
+            "Electricity rate:",
+            electricity_rate_raw
+        )
+
+        print(
+            "Estimated Year 1 savings:",
+            estimated_year_1_savings
+        )
+
+        print(
+            "Simple payback:",
+            simple_payback_years,
+            "years"
+        )
 
         # Update AI custom fields in GHL
         ghl_api_key = os.environ.get("GHL_API_KEY")
