@@ -163,7 +163,23 @@ Extract these fields:
 3. Peak demand in kW
 4. Billing period
 5. service address
-6. Effective electric rate in $/kWh
+6. Electricity energy rate in $/kWh
+
+Find the rate actually charged for electricity energy consumption.
+
+Use an explicit $/kWh energy or supply rate if the bill provides one.
+
+If there is no explicit $/kWh rate, calculate it ONLY when possible using:
+energy/supply charges ÷ electricity kWh usage.
+
+Do NOT use:
+- demand charges
+- taxes
+- fixed monthly/customer charges
+- late fees
+- unrelated delivery charges
+
+If a reliable energy rate cannot be determined from the bill, return an empty string.
 
 Return ONLY valid JSON in exactly this format:
 
