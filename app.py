@@ -478,7 +478,24 @@ If a value cannot be found, return an empty string.
                         "fieldValue": extracted_data.get(
                             "property_address", ""
                         )
-                    }
+                    },
+                    { "id": "303wqmJNOMRe7fhZ1OTA",
+    "fieldValue": str(
+        round(preliminary_system_size_kw, 2)
+    ) if preliminary_system_size_kw is not None else ""
+},
+{
+    "id": "hsDEvEqotfjoHL1bRoS5",
+    "fieldValue": str(
+        round(estimated_annual_solar_kwh, 2)
+    ) if estimated_annual_solar_kwh is not None else ""
+},
+{
+    "id": "LuMoa9805spakF6q1qi6",
+    "fieldValue": str(
+        round(annual_production_per_kw, 2)
+    ) if annual_production_per_kw is not None else ""
+}
                 ]
             }
 
@@ -526,7 +543,6 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=10000
     )
-
 
     
 
