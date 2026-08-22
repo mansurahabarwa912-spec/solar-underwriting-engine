@@ -547,7 +547,14 @@ If a value cannot be found, return an empty string.
         estimated_project_cost = None
         estimated_year_1_savings = None
         simple_payback_years = None
+ # Preliminary depreciation assumption
+        depreciation_rate_raw = os.environ.get(
+            "PRELIMINARY_DEPRECIATION_RATE",
+            ""
+        )
 
+        preliminary_depreciation_rate = None
+        estimated_depreciation_benefit = None
         # ==========================================
         # TAX CREDIT CONFIGURATION
         # ==========================================
@@ -572,7 +579,35 @@ If a value cannot be found, return an empty string.
                 * 1000
                 * cost_per_watt
             )
+  # Preliminary depreciation benefit
+        try:
 
+            if str(depreciation_rate_raw).strip() != "":
+
+                preliminary_depreciation_rate = (
+                    float(
+                        str(depreciation_rate_raw)
+                        .replace("%", "")
+                        .strip()
+                    ) / 100
+                )
+
+                if (
+                    0 <= preliminary_depreciation_rate <= 1
+                    and estimated_project_cost is not None
+                ):
+
+                    estimated_depreciation_benefit = (
+                        estimated_project_cost
+                        * preliminary_depreciation_rate
+                    )
+
+        except (ValueError, TypeError):
+
+            print(
+                "Could not calculate "
+                "preliminary depreciation benefit."
+            )
         # ==========================================
         # PRELIMINARY TAX CREDIT
         # ==========================================
@@ -721,6 +756,16 @@ If a value cannot be found, return an empty string.
             "Net project cost:",
             estimated_net_project_cost
         )
+
+        print(
+            "Depreciation rate:",
+            preliminary_depreciation_rate
+        )
+
+        print(
+    "Estimated depreciation benefit:",
+    estimated_depreciation_benefit
+)
 
         print(
             "Electricity rate:",
@@ -912,6 +957,17 @@ If a value cannot be found, return an empty string.
                         else ""
                     },
 
+{
+    "id": "5TJQOIFicqCs2aIipsFm",
+    "fieldValue": str(
+        round(
+            estimated_depreciation_benefit,
+            2
+        )
+    )
+    if estimated_depreciation_benefit is not None
+    else ""
+},
                     # Incentive-adjusted payback
                     {
                         "id": "NABZeM3IEbGMpVWzkXsd",
