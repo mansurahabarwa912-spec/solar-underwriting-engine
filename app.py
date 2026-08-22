@@ -455,7 +455,9 @@ If a value cannot be found, return an empty string.
 
         # Preliminary commercial solar cost assumption
         # $/W can be changed later to match actual EPC pricing.
-        cost_per_watt = 1.50
+        cost_per_watt = float(
+    os.environ.get("SOLAR_COST_PER_WATT", "1.50")
+)
 
         estimated_project_cost = None
         estimated_year_1_savings = None
@@ -606,7 +608,7 @@ If a value cannot be found, return an empty string.
 {
     "id": "L7WjNOBcBux2B1mkRBlR",
     "fieldValue": extracted_data.get(
-        "electricity_rate_per_kwh",
+        "electric_rate_per_kwh",
         ""
     )
 },
@@ -657,4 +659,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=10000
     )
+
 
