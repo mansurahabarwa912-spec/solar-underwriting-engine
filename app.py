@@ -462,7 +462,45 @@ If a value cannot be found, return an empty string.
         estimated_project_cost = None
         estimated_year_1_savings = None
         simple_payback_years = None
+ # Preliminary tax credit assumption
+        # Leave blank unless the project has been reviewed for eligibility.
+        tax_credit_rate_raw = os.environ.get(
+            "PRELIMINARY_TAX_CREDIT_RATE",
+            ""
+        )
 
+        preliminary_tax_credit_rate = None
+        estimated_tax_credit = None
+        estimated_net_project_cost = None
+
+        try:
+            if str(tax_credit_rate_raw).strip() != "":
+                preliminary_tax_credit_rate = (
+                    float(
+                        str(tax_credit_rate_raw)
+                        .replace("%", "")
+                        .strip()
+                    ) / 100
+                )
+
+                if (
+                    preliminary_tax_credit_rate >= 0
+                    and preliminary_tax_credit_rate <= 1
+                    and estimated_project_cost is not None
+                ):
+                    estimated_tax_credit = (
+                        estimated_project_cost
+                        * preliminary_tax_credit_rate
+                    )
+
+                    estimated_net_project_cost = (
+                        estimated_project_cost
+                        - estimated_tax_credit
+                    )
+
+        except (ValueError, TypeError):
+
+            print("Could not calculate preliminary tax credit.")
         if preliminary_system_size_kw is not None:
 
             estimated_project_cost = (
@@ -611,6 +649,15 @@ If a value cannot be found, return an empty string.
         "electric_rate_per_kwh",
         ""
     )
+},
+{ 
+    "id": "BG2CefNGA9Dz9myuqymJ",
+    "fieldValue": str(
+        round(
+            preliminary_tax_credit_rate * 100,
+            2
+        )
+    ) if preliminary_tax_credit_rate is not None else ""
 },
                 ]
             }
