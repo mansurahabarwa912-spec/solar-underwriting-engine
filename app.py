@@ -671,6 +671,12 @@ If a value cannot be found, return an empty string.
         round(estimated_net_project_cost, 2)
     ) if estimated_net_project_cost is not None else ""
 },
+{ 
+    "id": "NABZeM3IEbGMpVWzkXsd",
+    "fieldValue": str(
+        round(incentive_adjusted_payback_years, 2) # pyright: ignore[reportUndefinedVariable]
+    ) if incentive_adjusted_payback_years is not None else "" # pyright: ignore[reportUndefinedVariable]
+},  
                 ]
             }
 
@@ -718,4 +724,3 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=10000
     )
-
