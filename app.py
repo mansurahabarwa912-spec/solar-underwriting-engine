@@ -1,4 +1,4 @@
-rom flask import Flask, request, jsonify
+from flask import Flask, request, jsonify
 from openai import OpenAI
 import os
 import json
