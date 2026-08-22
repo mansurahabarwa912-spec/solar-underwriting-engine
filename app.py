@@ -659,6 +659,18 @@ If a value cannot be found, return an empty string.
         )
     ) if preliminary_tax_credit_rate is not None else ""
 },
+{
+    "id": "0e349aKLH3y8jfZ0WlpJ",
+    "fieldValue": str(
+        round(estimated_tax_credit, 2)
+    ) if estimated_tax_credit is not None else ""
+},
+{
+    "id": "Ymvq1fyoArmNlBZZoqmn",
+    "fieldValue": str(
+        round(estimated_net_project_cost, 2)
+    ) if estimated_net_project_cost is not None else ""
+},
                 ]
             }
 
@@ -706,5 +718,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=10000
     )
-
 
