@@ -579,7 +579,7 @@ If a value cannot be found, return an empty string.
             simple_payback_years,
             "years"
         )
-# Incentive-adjusted payback
+  # Incentive-adjusted payback
         incentive_adjusted_payback_years = None
 
         if (
@@ -593,10 +593,27 @@ If a value cannot be found, return an empty string.
             )
 
         print(
+            "Net project cost:",
+            estimated_net_project_cost
+        )
+
+        print(
+            "Year 1 savings:",
+            estimated_year_1_savings
+        )
+
+        print(
             "Incentive-adjusted payback:",
             incentive_adjusted_payback_years,
             "years"
         )
+
+        print(
+            "Incentive-adjusted payback:",
+            incentive_adjusted_payback_years,
+            "years"
+        )
+
         # Update AI custom fields in GHL
         ghl_api_key = os.environ.get("GHL_API_KEY")
         ghl_location_id = os.environ.get("GHL_LOCATION_ID")
