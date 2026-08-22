@@ -555,6 +555,38 @@ If a value cannot be found, return an empty string.
 
         preliminary_depreciation_rate = None
         estimated_depreciation_benefit = None
+  # Estimated tax savings from depreciation
+        try:
+
+            if (
+                str(corporate_tax_rate_raw).strip() != ""
+                and estimated_depreciation_benefit is not None
+            ):
+
+                preliminary_corporate_tax_rate = (
+                    float(
+                        str(corporate_tax_rate_raw)
+                        .replace("%", "")
+                        .strip()
+                    ) / 100
+                )
+
+                if (
+                    0 <= preliminary_corporate_tax_rate <= 1
+                ):
+
+                    estimated_depreciation_tax_savings = (
+                        estimated_depreciation_benefit
+                        * preliminary_corporate_tax_rate
+                    )
+
+        except (ValueError, TypeError):
+
+            print(
+                "Could not calculate "
+                "depreciation tax savings."
+            )
+
         # ==========================================
         # TAX CREDIT CONFIGURATION
         # ==========================================
@@ -567,6 +599,14 @@ If a value cannot be found, return an empty string.
         preliminary_tax_credit_rate = None
         estimated_tax_credit = None
         estimated_net_project_cost = None
+         # Preliminary corporate tax rate
+        corporate_tax_rate_raw = os.environ.get(
+            "PRELIMINARY_CORPORATE_TAX_RATE",
+            ""
+        )
+
+        preliminary_corporate_tax_rate = None
+        estimated_depreciation_tax_savings = None
 
         # ==========================================
         # PROJECT COST
@@ -768,6 +808,16 @@ If a value cannot be found, return an empty string.
 )
 
         print(
+            "Corporate tax rate:",
+            preliminary_corporate_tax_rate
+        )
+
+        print(
+            "Estimated depreciation tax savings:",
+            estimated_depreciation_tax_savings
+        )
+
+        print(
             "Electricity rate:",
             electricity_rate_raw
         )
@@ -966,6 +1016,17 @@ If a value cannot be found, return an empty string.
         )
     )
     if estimated_depreciation_benefit is not None
+    else ""
+},
+{
+   "id": "4Twip5swlOpbwTh4Fcfv",
+    "fieldValue": str(
+        round(
+            estimated_depreciation_tax_savings,
+            2
+        )
+    )
+    if estimated_depreciation_tax_savings is not None
     else ""
 },
                     # Incentive-adjusted payback
