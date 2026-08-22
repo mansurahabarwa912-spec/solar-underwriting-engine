@@ -579,7 +579,24 @@ If a value cannot be found, return an empty string.
             simple_payback_years,
             "years"
         )
+# Incentive-adjusted payback
+        incentive_adjusted_payback_years = None
 
+        if (
+            estimated_net_project_cost is not None
+            and estimated_year_1_savings is not None
+            and estimated_year_1_savings > 0
+        ):
+            incentive_adjusted_payback_years = (
+                estimated_net_project_cost
+                / estimated_year_1_savings
+            )
+
+        print(
+            "Incentive-adjusted payback:",
+            incentive_adjusted_payback_years,
+            "years"
+        )
         # Update AI custom fields in GHL
         ghl_api_key = os.environ.get("GHL_API_KEY")
         ghl_location_id = os.environ.get("GHL_LOCATION_ID")
@@ -674,8 +691,8 @@ If a value cannot be found, return an empty string.
 { 
     "id": "NABZeM3IEbGMpVWzkXsd",
     "fieldValue": str(
-        round(incentive_adjusted_payback_years, 2) # pyright: ignore[reportUndefinedVariable]
-    ) if incentive_adjusted_payback_years is not None else "" # pyright: ignore[reportUndefinedVariable]
+        round(incentive_adjusted_payback_years, 2)
+    ) if incentive_adjusted_payback_years is not None else "" 
 },  
                 ]
             }
