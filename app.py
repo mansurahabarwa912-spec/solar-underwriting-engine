@@ -555,37 +555,14 @@ If a value cannot be found, return an empty string.
 
         preliminary_depreciation_rate = None
         estimated_depreciation_benefit = None
-  # Estimated tax savings from depreciation
-        try:
+      # Preliminary corporate tax rate
+        corporate_tax_rate_raw = os.environ.get(
+            "PRELIMINARY_CORPORATE_TAX_RATE",
+            ""
+        )
 
-            if (
-                str(corporate_tax_rate_raw).strip() != ""
-                and estimated_depreciation_benefit is not None
-            ):
-
-                preliminary_corporate_tax_rate = (
-                    float(
-                        str(corporate_tax_rate_raw)
-                        .replace("%", "")
-                        .strip()
-                    ) / 100
-                )
-
-                if (
-                    0 <= preliminary_corporate_tax_rate <= 1
-                ):
-
-                    estimated_depreciation_tax_savings = (
-                        estimated_depreciation_benefit
-                        * preliminary_corporate_tax_rate
-                    )
-
-        except (ValueError, TypeError):
-
-            print(
-                "Could not calculate "
-                "depreciation tax savings."
-            )
+        preliminary_corporate_tax_rate = None
+        estimated_depreciation_tax_savings = None
 
         # ==========================================
         # TAX CREDIT CONFIGURATION
@@ -641,6 +618,31 @@ If a value cannot be found, return an empty string.
                         estimated_project_cost
                         * preliminary_depreciation_rate
                     )
+                    # Estimated tax savings from depreciation
+                    try:
+                        if (
+                            str(corporate_tax_rate_raw).strip() != ""
+                            and estimated_depreciation_benefit is not None
+                        ):
+                            preliminary_corporate_tax_rate = (
+                                float(
+                                    str(corporate_tax_rate_raw)
+                                    .replace("%", "")
+                                    .strip()
+                                ) / 100
+                            )
+
+                            if 0 <= preliminary_corporate_tax_rate <= 1:
+                                estimated_depreciation_tax_savings = (
+                                    estimated_depreciation_benefit
+                                    * preliminary_corporate_tax_rate
+                                )
+
+                    except (ValueError, TypeError):
+                        print(
+                            "Could not calculate "
+                            "depreciation tax savings."
+                        )
 
         except (ValueError, TypeError):
 
