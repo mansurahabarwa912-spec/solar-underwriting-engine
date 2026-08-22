@@ -163,6 +163,7 @@ Extract these fields:
 3. Peak demand in kW
 4. Billing period
 5. service address
+6. Effective electric rate in $/kWh
 
 Return ONLY valid JSON in exactly this format:
 
@@ -171,7 +172,8 @@ Return ONLY valid JSON in exactly this format:
     "annual_kwh_usage": "",
     "peak_demand_kw": "",
     "billing_period": "",
-    "property_address": ""
+    "property_address": "",
+    "electric_rate_per_kwh": ""
 }
 
 If a value cannot be found, return an empty string.
@@ -495,7 +497,14 @@ If a value cannot be found, return an empty string.
     "fieldValue": str(
         round(annual_production_per_kw, 2)
     ) if annual_production_per_kw is not None else ""
-}
+},
+{
+    "id": "L7WjNOBcBux2B1mkRBlR",
+    "fieldValue": extracted_data.get(
+        "electricity_rate_per_kwh",
+        ""
+    )
+},
                 ]
             }
 
@@ -543,6 +552,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=10000
     )
-
-    
 
