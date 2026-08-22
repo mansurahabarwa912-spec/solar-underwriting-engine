@@ -471,7 +471,7 @@ If a value cannot be found, return an empty string.
 
         # Use the extracted electricity rate
         electricity_rate_raw = extracted_data.get(
-            "electricity_rate_per_kwh",
+            "electric_rate_per_kwh",
             ""
         )
 
