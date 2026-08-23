@@ -1118,6 +1118,69 @@ If a value cannot be found, return an empty string.
         )
 
         # ==========================================
+        # GENERATE PRELIMINARY UNDERWRITING PDF
+        # ==========================================
+
+        pdf_path = os.path.join(
+            tempfile.gettempdir(),
+            f"underwriting_{contact_id}.pdf"
+        )
+
+        try:
+
+            create_underwriting_pdf(
+                output_path=pdf_path,
+
+                property_address=property_address,
+
+                utility_provider=extracted_data.get(
+                    "utility_provider",
+                    ""
+                ),
+
+                system_size_kw=preliminary_system_size_kw,
+
+                annual_solar_kwh=estimated_annual_solar_kwh,
+
+                project_cost=estimated_project_cost,
+
+                year_1_savings=estimated_year_1_savings,
+
+                simple_payback=simple_payback_years,
+
+                tax_credit=estimated_tax_credit,
+
+                net_project_cost=estimated_net_project_cost,
+
+                depreciation_tax_savings=
+                    estimated_depreciation_tax_savings,
+
+                incentive_adjusted_payback=
+                    incentive_adjusted_payback_years,
+
+                year_1_net_benefit=
+                    estimated_year_1_net_economic_benefit,
+
+                review_flag="PASS"
+            )
+
+            print("\n========================")
+            print("UNDERWRITING PDF")
+            print("========================")
+
+            print("PDF created:", pdf_path)
+
+        except Exception as e:
+
+            print("\n========================")
+            print("PDF GENERATION ERROR")
+            print("========================")
+
+            print(str(e))
+
+            pdf_path = None
+
+        # ==========================================
         # UPDATE GHL CONTACT
         # ==========================================
 
