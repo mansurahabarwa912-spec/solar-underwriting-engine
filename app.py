@@ -805,6 +805,57 @@ If a value cannot be found, return an empty string.
                 )
             )
 
+         # ==========================================
+        # UNDERWRITING QUALITY CONTROL
+        # ==========================================
+
+        underwriting_review_flag = "PRELIMINARY - PASS"
+
+        missing_inputs = []
+
+        if not annual_kwh_raw:
+            missing_inputs.append("Annual kWh")
+
+        if not peak_demand_raw:
+            missing_inputs.append("Peak demand")
+
+        if not property_address:
+            missing_inputs.append("Property address")
+
+        if annual_production_per_kw is None or annual_production_per_kw <= 0:
+            missing_inputs.append("PVWatts production")
+
+        if electricity_rate is None or electricity_rate <= 0:
+            missing_inputs.append("Electricity rate")
+
+        if estimated_project_cost is None or estimated_project_cost <= 0:
+            missing_inputs.append("Project cost")
+
+        if estimated_year_1_savings is None or estimated_year_1_savings <= 0:
+            missing_inputs.append("Year 1 savings")
+
+        if missing_inputs:
+
+            underwriting_review_flag = (
+                "REVIEW REQUIRED - Missing: "
+                + ", ".join(missing_inputs)
+            )
+
+        elif (
+            preliminary_tax_credit_rate is None
+            or estimated_tax_credit is None
+            or estimated_net_project_cost is None
+        ):
+
+            underwriting_review_flag = (
+                "PRELIMINARY - INCENTIVE REVIEW REQUIRED"
+            )
+
+        print(
+            "Underwriting review flag:",
+            underwriting_review_flag
+        )    
+
         # ==========================================
         # FINANCIAL UNDERWRITING LOG
         # ==========================================
@@ -1141,7 +1192,12 @@ If a value cannot be found, return an empty string.
                             if incentive_adjusted_payback_years
                             is not None
                             else ""
-                    }
+                    },
+                     # Underwriting review flag
+                    {
+                        "id": "2RosGiBTpC9nr9twHtTu",
+                        "fieldValue": underwriting_review_flag
+                    },
                 ]
             }
 
