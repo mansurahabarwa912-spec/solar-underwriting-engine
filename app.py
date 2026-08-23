@@ -563,6 +563,7 @@ If a value cannot be found, return an empty string.
 
         preliminary_corporate_tax_rate = None
         estimated_depreciation_tax_savings = None
+        estimated_year_1_net_economic_benefit = None
 
         # ==========================================
         # TAX CREDIT CONFIGURATION
@@ -637,18 +638,21 @@ If a value cannot be found, return an empty string.
                                     estimated_depreciation_benefit
                                     * preliminary_corporate_tax_rate
                                 )
+                            # Year 1 net economic benefit
+                            if estimated_year_1_savings is not None:
+                                estimated_year_1_net_economic_benefit = (
+                                    estimated_year_1_savings
+                                    + estimated_depreciation_tax_savings
+                                )
 
                     except (ValueError, TypeError):
                         print(
-                            "Could not calculate "
-                            "depreciation tax savings."
+                            "Could not calculate depreciation tax savings."
                         )
 
         except (ValueError, TypeError):
-
             print(
-                "Could not calculate "
-                "preliminary depreciation benefit."
+                "Could not calculate preliminary depreciation benefit."
             )
         # ==========================================
         # PRELIMINARY TAX CREDIT
@@ -839,6 +843,11 @@ If a value cannot be found, return an empty string.
             "Incentive-adjusted payback:",
             incentive_adjusted_payback_years,
             "years"
+        )
+
+        print(
+            "Estimated Year 1 net economic benefit:",
+            estimated_year_1_net_economic_benefit
         )
 
         # ==========================================
@@ -1043,7 +1052,19 @@ If a value cannot be found, return an empty string.
                         if incentive_adjusted_payback_years
                         is not None
                         else ""
-                    }
+                    },
+                    # Estimated Year 1 net economic benefit
+                    {
+                        "id": "XGCAReyZJfuI8eLlhFeU",
+    "fieldValue": str(
+        round(
+            estimated_year_1_net_economic_benefit,
+            2
+        )
+    )
+    if estimated_year_1_net_economic_benefit is not None
+    else ""
+                    },
                 ]
             }
 
