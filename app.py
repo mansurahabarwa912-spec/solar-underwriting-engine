@@ -4,8 +4,15 @@ import os
 import json
 import requests
 import tempfile
+import cloudinary
+import cloudinary.uploader
 
 app = Flask(__name__)
+cloudinary.config(
+    cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.environ.get("CLOUDINARY_API_KEY"),
+    api_secret=os.environ.get("CLOUDINARY_API_SECRET")
+)
 from flask import Flask, request, jsonify
 from openai import OpenAI
 import os
@@ -1169,6 +1176,38 @@ If a value cannot be found, return an empty string.
             print("========================")
 
             print("PDF created:", pdf_path)
+
+            # ==========================================
+            # UPLOAD UNDERWRITING PDF TO CLOUDINARY
+            # ==========================================
+
+            pdf_url = None
+
+            if pdf_path:
+
+                try:
+
+                    upload_result = cloudinary.uploader.upload(
+                        pdf_path,
+                        resource_type="raw",
+                        folder="solar_underwriting"
+                    )
+
+                    pdf_url = upload_result.get("secure_url")
+
+                    print("\n========================")
+                    print("CLOUDINARY PDF UPLOAD")
+                    print("========================")
+
+                    print("PDF URL:", pdf_url)
+
+                except Exception as e:
+
+                    print("\n========================")
+                    print("CLOUDINARY UPLOAD ERROR")
+                    print("========================")
+
+                    print(str(e))
 
         except Exception as e:
 
