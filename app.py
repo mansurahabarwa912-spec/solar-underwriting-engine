@@ -12,20 +12,10 @@ client = OpenAI(
 )
 
 
-# ==========================================
-# HOME
-# ==========================================
-
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({
-        "status": "online"
-    })
+    return jsonify({"status": "online"})
 
-
-# ==========================================
-# WEBHOOK
-# ==========================================
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -36,25 +26,15 @@ def webhook():
     print("NEW REQUEST RECEIVED")
     print("========================")
 
-    print(
-        json.dumps(
-            data,
-            indent=4
-        )
-    )
+    print(json.dumps(data, indent=4))
 
     # ==========================================
     # GET CUSTOM DATA FROM GHL
     # ==========================================
 
-    custom_data = data.get(
-        "customData",
-        {}
-    )
+    custom_data = data.get("customData", {})
 
-    bill_data = custom_data.get(
-        "utility_bill"
-    )
+    bill_data = custom_data.get("utility_bill")
 
     print("\n========================")
     print("UTILITY BILL DATA")
@@ -68,34 +48,19 @@ def webhook():
 
     bill_url = None
 
-    if isinstance(
-        bill_data,
-        str
-    ):
+    if isinstance(bill_data, str):
 
         bill_url = bill_data
 
-    elif (
-        isinstance(
-            bill_data,
-            list
-        )
-        and len(bill_data) > 0
-    ):
+    elif isinstance(bill_data, list) and len(bill_data) > 0:
 
         first_bill = bill_data[0]
 
-        if isinstance(
-            first_bill,
-            str
-        ):
+        if isinstance(first_bill, str):
 
             bill_url = first_bill
 
-        elif isinstance(
-            first_bill,
-            dict
-        ):
+        elif isinstance(first_bill, dict):
 
             bill_url = (
                 first_bill.get("url")
@@ -104,10 +69,7 @@ def webhook():
                 or first_bill.get("downloadUrl")
             )
 
-    elif isinstance(
-        bill_data,
-        dict
-    ):
+    elif isinstance(bill_data, dict):
 
         bill_url = (
             bill_data.get("url")
@@ -127,13 +89,11 @@ def webhook():
             "message": "No utility bill URL received"
         })
 
-
     print("\n========================")
     print("UTILITY BILL URL FOUND")
     print("========================")
 
     print(bill_url)
-
 
     try:
 
@@ -150,23 +110,9 @@ def webhook():
         print("UTILITY BILL DOWNLOAD")
         print("========================")
 
-        print(
-            "Status code:",
-            response.status_code
-        )
-
-        print(
-            "File size:",
-            len(response.content),
-            "bytes"
-        )
-
-        print(
-            "Content type:",
-            response.headers.get(
-                "Content-Type"
-            )
-        )
+        print("Status code:", response.status_code)
+        print("File size:", len(response.content), "bytes")
+        print("Content type:", response.headers.get("Content-Type"))
 
         if response.status_code != 200:
 
@@ -174,7 +120,6 @@ def webhook():
                 "status": "error",
                 "message": "Could not download utility bill"
             }), 400
-
 
         # ==========================================
         # SAVE PDF TEMPORARILY
@@ -185,37 +130,24 @@ def webhook():
             delete=False
         ) as temp_file:
 
-            temp_file.write(
-                response.content
-            )
+            temp_file.write(response.content)
 
             pdf_path = temp_file.name
-
 
         # ==========================================
         # UPLOAD PDF TO OPENAI
         # ==========================================
 
-        with open(
-            pdf_path,
-            "rb"
-        ) as pdf_file:
-
-            uploaded_file = client.files.create(
-                file=pdf_file,
-                purpose="user_data"
-            )
-
+        uploaded_file = client.files.create(
+            file=open(pdf_path, "rb"),
+            purpose="user_data"
+        )
 
         print("\n========================")
         print("FILE UPLOADED TO OPENAI")
         print("========================")
 
-        print(
-            "File ID:",
-            uploaded_file.id
-        )
-
+        print("File ID:", uploaded_file.id)
 
         # ==========================================
         # AI UTILITY BILL EXTRACTION
@@ -241,7 +173,6 @@ def webhook():
                             "type": "input_text",
 
                             "text": """
-
 Read this utility bill carefully.
 
 Extract these fields:
@@ -269,7 +200,8 @@ Do NOT use:
 - late fees
 - unrelated delivery charges
 
-If a reliable energy rate cannot be determined from the bill, return an empty string.
+If a reliable energy rate cannot be determined from the bill,
+return an empty string.
 
 Return ONLY valid JSON in exactly this format:
 
@@ -283,7 +215,6 @@ Return ONLY valid JSON in exactly this format:
 }
 
 If a value cannot be found, return an empty string.
-
 """
                         }
 
@@ -293,23 +224,13 @@ If a value cannot be found, return an empty string.
             ]
         )
 
-
         print("\n========================")
         print("AI EXTRACTION")
         print("========================")
 
-        print(
-            result.output_text
-        )
+        print(result.output_text)
 
-
-        # ==========================================
-        # CONTACT ID
-        # ==========================================
-
-        contact_id = custom_data.get(
-            "contact_id"
-        )
+        contact_id = custom_data.get("contact_id")
 
         print("\n========================")
         print("CONTACT ID")
@@ -317,63 +238,29 @@ If a value cannot be found, return an empty string.
 
         print(contact_id)
 
-
-        # ==========================================
-        # GHL ENVIRONMENT
-        # ==========================================
-
-        print("\n========================")
-        print("GHL ENVIRONMENT")
-        print("========================")
-
-        print(
-            "API key found:",
-            bool(
-                os.environ.get(
-                    "GHL_API_KEY"
-                )
-            )
-        )
-
-        print(
-            "Location ID found:",
-            bool(
-                os.environ.get(
-                    "GHL_LOCATION_ID"
-                )
-            )
-        )
-
-
         # ==========================================
         # CONVERT AI RESPONSE TO JSON
         # ==========================================
 
         try:
 
-            ai_text = (
-                result.output_text
-                .strip()
-            )
+            ai_text = result.output_text.strip()
 
             if ai_text.startswith("```"):
 
-                ai_text = (
-                    ai_text
-                    .replace(
-                        "```json",
-                        ""
-                    )
-                    .replace(
-                        "```",
-                        ""
-                    )
-                    .strip()
+                ai_text = ai_text.replace(
+                    "```json",
+                    ""
                 )
 
-            extracted_data = json.loads(
-                ai_text
-            )
+                ai_text = ai_text.replace(
+                    "```",
+                    ""
+                )
+
+                ai_text = ai_text.strip()
+
+            extracted_data = json.loads(ai_text)
 
         except Exception as e:
 
@@ -381,18 +268,10 @@ If a value cannot be found, return an empty string.
             print("JSON EXTRACTION ERROR")
             print("========================")
 
-            print(
-                "Error:",
-                str(e)
-            )
-
-            print(
-                "Raw AI response:",
-                result.output_text
-            )
+            print("Error:", str(e))
+            print("Raw AI response:", result.output_text)
 
             extracted_data = {}
-
 
         print("\n========================")
         print("EXTRACTED DATA")
@@ -405,7 +284,6 @@ If a value cannot be found, return an empty string.
             )
         )
 
-
         # ==========================================
         # PROPERTY ADDRESS → COORDINATES
         # ==========================================
@@ -415,14 +293,8 @@ If a value cannot be found, return an empty string.
             ""
         )
 
-        print(
-            "PROPERTY ADDRESS:",
-            property_address
-        )
-
         latitude = ""
         longitude = ""
-
 
         if property_address:
 
@@ -435,26 +307,17 @@ If a value cannot be found, return an empty string.
             )
 
             geocode_response = requests.get(
-
                 geocode_url,
 
                 params={
-
-                    "address":
-                        property_address,
-
-                    "key":
-                        google_api_key
-
+                    "address": property_address,
+                    "key": google_api_key
                 },
 
                 timeout=30
             )
 
-            geocode_data = (
-                geocode_response.json()
-            )
-
+            geocode_data = geocode_response.json()
 
             print("\n========================")
             print("GOOGLE GEOCODING RESPONSE")
@@ -462,9 +325,7 @@ If a value cannot be found, return an empty string.
 
             print(
                 "Status:",
-                geocode_data.get(
-                    "status"
-                )
+                geocode_data.get("status")
             )
 
             print(
@@ -475,25 +336,13 @@ If a value cannot be found, return an empty string.
                 )
             )
 
-
             if (
-
-                geocode_data.get(
-                    "status"
-                ) == "OK"
-
-                and
-
-                geocode_data.get(
-                    "results"
-                )
-
+                geocode_data.get("status") == "OK"
+                and geocode_data.get("results")
             ):
 
                 location = (
-                    geocode_data[
-                        "results"
-                    ][0]
+                    geocode_data["results"][0]
                     ["geometry"]
                     ["location"]
                 )
@@ -508,26 +357,13 @@ If a value cannot be found, return an empty string.
                     ""
                 )
 
-
         print("\n========================")
         print("PROPERTY COORDINATES")
         print("========================")
 
-        print(
-            "Address:",
-            property_address
-        )
-
-        print(
-            "Latitude:",
-            latitude
-        )
-
-        print(
-            "Longitude:",
-            longitude
-        )
-
+        print("Address:", property_address)
+        print("Latitude:", latitude)
+        print("Longitude:", longitude)
 
         # ==========================================
         # NREL PVWATTS
@@ -539,79 +375,52 @@ If a value cannot be found, return an empty string.
 
         pvwatts_data = {}
 
-
         print("\n========================")
         print("PVWATTS CHECK")
         print("========================")
 
-        print(
-            "Latitude:",
-            latitude
-        )
-
-        print(
-            "Longitude:",
-            longitude
-        )
+        print("Latitude:", latitude)
+        print("Longitude:", longitude)
 
         print(
             "NREL API key found:",
             bool(nrel_api_key)
         )
 
-
-        if (
-            latitude
-            and longitude
-            and nrel_api_key
-        ):
+        if latitude and longitude and nrel_api_key:
 
             pvwatts_url = (
-                "https://developer.nrel.gov/api/pvwatts/v8.json"
+                "https://developer.nlr.gov/api/pvwatts/v8.json"
             )
 
             pvwatts_params = {
 
-                "api_key":
-                    nrel_api_key,
+                "api_key": nrel_api_key,
 
-                "lat":
-                    latitude,
+                "lat": latitude,
 
-                "lon":
-                    longitude,
+                "lon": longitude,
 
-                "system_capacity":
-                    1,
+                "system_capacity": 1,
 
-                "azimuth":
-                    180,
+                "azimuth": 180,
 
-                "tilt":
-                    20,
+                "tilt": 20,
 
-                "array_type":
-                    1,
+                "array_type": 1,
 
-                "module_type":
-                    1,
+                "module_type": 1,
 
-                "losses":
-                    14
+                "losses": 14
             }
-
 
             try:
 
                 pvwatts_response = requests.get(
-
                     pvwatts_url,
-
                     params=pvwatts_params,
-
                     timeout=30
                 )
-
 
                 print("\n========================")
                 print("PVWATTS RESPONSE")
@@ -622,11 +431,9 @@ If a value cannot be found, return an empty string.
                     pvwatts_response.status_code
                 )
 
-
                 pvwatts_data = (
                     pvwatts_response.json()
                 )
-
 
                 print(
                     json.dumps(
@@ -635,29 +442,15 @@ If a value cannot be found, return an empty string.
                     )
                 )
 
+            except requests.exceptions.RequestException as e:
 
-            except (
-                requests.exceptions.RequestException
-            ) as e:
+                print("\n========================")
+                print("PVWATTS CONNECTION ERROR")
+                print("========================")
 
-                print(
-                    "\n========================"
-                )
-
-                print(
-                    "PVWATTS CONNECTION ERROR"
-                )
-
-                print(
-                    "========================"
-                )
-
-                print(
-                    str(e)
-                )
+                print(str(e))
 
                 pvwatts_data = {}
-
 
         # ==========================================
         # PRELIMINARY SOLAR SYSTEM SIZING
@@ -673,90 +466,53 @@ If a value cannot be found, return an empty string.
             ""
         )
 
-
         preliminary_system_size_kw = None
 
         annual_production_per_kw = None
 
         estimated_annual_solar_kwh = None
 
-
         try:
 
             annual_kwh = float(
-                str(
-                    annual_kwh_raw
-                )
-                .replace(
-                    ",",
-                    ""
-                )
+                str(annual_kwh_raw)
+                .replace(",", "")
                 .strip()
             )
 
             peak_demand_kw = float(
-                str(
-                    peak_demand_raw
-                )
-                .replace(
-                    ",",
-                    ""
-                )
+                str(peak_demand_raw)
+                .replace(",", "")
                 .strip()
             )
 
             annual_production_per_kw = float(
-
                 pvwatts_data
-                .get(
-                    "outputs",
-                    {}
-                )
-                .get(
-                    "ac_annual",
-                    0
-                )
-
+                .get("outputs", {})
+                .get("ac_annual", 0)
             )
 
-
             if (
-
                 annual_kwh > 0
-
-                and
-
-                annual_production_per_kw > 0
-
+                and annual_production_per_kw > 0
             ):
 
                 preliminary_system_size_kw = (
-
                     annual_kwh
-                    /
-                    annual_production_per_kw
-
+                    / annual_production_per_kw
                 )
 
                 estimated_annual_solar_kwh = (
-
                     preliminary_system_size_kw
-                    *
-                    annual_production_per_kw
-
+                    * annual_production_per_kw
                 )
 
-
-        except (
-            ValueError,
-            TypeError
-        ):
+        except (ValueError, TypeError):
 
             print(
                 "Could not calculate "
                 "preliminary system size."
             )
-
 
         print("\n========================")
         print("PRELIMINARY SYSTEM SIZING")
@@ -792,9 +548,8 @@ If a value cannot be found, return an empty string.
             "kWh/year"
         )
 
-
         # ==========================================
-        # PRELIMINARY FINANCIAL UNDERWRITING
+        # FINANCIAL VARIABLES
         # ==========================================
 
         cost_per_watt = float(
@@ -804,16 +559,74 @@ If a value cannot be found, return an empty string.
             )
         )
 
-
         estimated_project_cost = None
 
         estimated_year_1_savings = None
 
         simple_payback_years = None
 
+        # ==========================================
+        # PROJECT COST
+        # ==========================================
+
+        if preliminary_system_size_kw is not None:
+
+            estimated_project_cost = (
+                preliminary_system_size_kw
+                * 1000
+                * cost_per_watt
+            )
 
         # ==========================================
-        # TAX CREDIT CONFIGURATION
+        # ELECTRICITY RATE + YEAR 1 SAVINGS
+        # ==========================================
+
+        electricity_rate_raw = extracted_data.get(
+            "electric_rate_per_kwh",
+            ""
+        )
+
+        electricity_rate = None
+
+        try:
+
+            electricity_rate = float(
+                str(electricity_rate_raw)
+                .replace("$", "")
+                .replace(",", "")
+                .strip()
+            )
+
+            if (
+                estimated_annual_solar_kwh is not None
+                and electricity_rate > 0
+            ):
+
+                estimated_year_1_savings = (
+                    estimated_annual_solar_kwh
+                    * electricity_rate
+                )
+
+            if (
+                estimated_project_cost is not None
+                and estimated_year_1_savings is not None
+                and estimated_year_1_savings > 0
+            ):
+
+                simple_payback_years = (
+                    estimated_project_cost
+                    / estimated_year_1_savings
+                )
+
+        except (ValueError, TypeError):
+
+            print(
+                "Could not calculate "
+                "Year 1 savings."
+            )
+
+        # ==========================================
+        # TAX CREDIT
         # ==========================================
 
         tax_credit_rate_raw = os.environ.get(
@@ -827,9 +640,46 @@ If a value cannot be found, return an empty string.
 
         estimated_net_project_cost = None
 
+        try:
+
+            if str(
+                tax_credit_rate_raw
+            ).strip() != "":
+
+                preliminary_tax_credit_rate = (
+                    float(
+                        str(
+                            tax_credit_rate_raw
+                        )
+                        .replace("%", "")
+                        .strip()
+                    ) / 100
+                )
+
+                if (
+                    0 <= preliminary_tax_credit_rate <= 1
+                    and estimated_project_cost is not None
+                ):
+
+                    estimated_tax_credit = (
+                        estimated_project_cost
+                        * preliminary_tax_credit_rate
+                    )
+
+                    estimated_net_project_cost = (
+                        estimated_project_cost
+                        - estimated_tax_credit
+                    )
+
+        except (ValueError, TypeError):
+
+            print(
+                "Could not calculate "
+                "preliminary tax credit."
+            )
 
         # ==========================================
-        # DEPRECIATION CONFIGURATION
+        # DEPRECIATION
         # ==========================================
 
         depreciation_rate_raw = os.environ.get(
@@ -841,9 +691,41 @@ If a value cannot be found, return an empty string.
 
         estimated_depreciation_benefit = None
 
+        try:
+
+            if str(
+                depreciation_rate_raw
+            ).strip() != "":
+
+                preliminary_depreciation_rate = (
+                    float(
+                        str(
+                            depreciation_rate_raw
+                        )
+                        .replace("%", "")
+                        .strip()
+                    ) / 100
+                )
+
+                if (
+                    0 <= preliminary_depreciation_rate <= 1
+                    and estimated_project_cost is not None
+                ):
+
+                    estimated_depreciation_benefit = (
+                        estimated_project_cost
+                        * preliminary_depreciation_rate
+                    )
+
+        except (ValueError, TypeError):
+
+            print(
+                "Could not calculate "
+                "depreciation benefit."
+            )
 
         # ==========================================
-        # CORPORATE TAX CONFIGURATION
+        # CORPORATE TAX RATE
         # ==========================================
 
         corporate_tax_rate_raw = os.environ.get(
@@ -855,331 +737,38 @@ If a value cannot be found, return an empty string.
 
         estimated_depreciation_tax_savings = None
 
-        estimated_year_1_net_economic_benefit = None
-
-
-        # ==========================================
-        # PROJECT COST
-        # ==========================================
-
-        if preliminary_system_size_kw is not None:
-
-            estimated_project_cost = (
-
-                preliminary_system_size_kw
-                * 1000
-                * cost_per_watt
-
-            )
-
-
-        # ==========================================
-        # PRELIMINARY TAX CREDIT
-        # ==========================================
-
         try:
 
             if str(
-                tax_credit_rate_raw
+                corporate_tax_rate_raw
             ).strip() != "":
 
-                preliminary_tax_credit_rate = (
-
-                    float(
-                        str(
-                            tax_credit_rate_raw
-                        )
-                        .replace(
-                            "%",
-                            ""
-                        )
-                        .strip()
-                    )
-                    /
-                    100
-
-                )
-
-
-                if (
-
-                    0
-                    <= preliminary_tax_credit_rate
-                    <= 1
-
-                    and
-
-                    estimated_project_cost
-                    is not None
-
-                ):
-
-                    estimated_tax_credit = (
-
-                        estimated_project_cost
-                        *
-                        preliminary_tax_credit_rate
-
-                    )
-
-                    estimated_net_project_cost = (
-
-                        estimated_project_cost
-                        -
-                        estimated_tax_credit
-
-                    )
-
-
-        except (
-            ValueError,
-            TypeError
-        ):
-
-            print(
-                "Could not calculate "
-                "preliminary tax credit."
-            )
-
-
-        # ==========================================
-        # PRELIMINARY DEPRECIATION BENEFIT
-        # ==========================================
-
-        try:
-
-            if (
-                str(
-                    depreciation_rate_raw
-                ).strip() != ""
-
-                and
-
-                estimated_project_cost
-                is not None
-            ):
-
-                preliminary_depreciation_rate = (
-
-                    float(
-                        str(
-                            depreciation_rate_raw
-                        )
-                        .replace(
-                            "%",
-                            ""
-                        )
-                        .strip()
-                    )
-                    /
-                    100
-
-                )
-
-
-                if (
-
-                    0
-                    <= preliminary_depreciation_rate
-                    <= 1
-
-                ):
-
-                    estimated_depreciation_benefit = (
-
-                        estimated_project_cost
-                        *
-                        preliminary_depreciation_rate
-
-                    )
-
-
-        except (
-            ValueError,
-            TypeError
-        ):
-
-            print(
-                "Could not calculate "
-                "preliminary depreciation benefit."
-            )
-
-
-        # ==========================================
-        # DEPRECIATION TAX SAVINGS
-        # ==========================================
-
-        try:
-
-            if (
-
-                str(
-                    corporate_tax_rate_raw
-                ).strip() != ""
-
-                and
-
-                estimated_depreciation_benefit
-                is not None
-
-            ):
-
                 preliminary_corporate_tax_rate = (
-
                     float(
                         str(
                             corporate_tax_rate_raw
                         )
-                        .replace(
-                            "%",
-                            ""
-                        )
+                        .replace("%", "")
                         .strip()
-                    )
-                    /
-                    100
-
+                    ) / 100
                 )
 
-
                 if (
-
-                    0
-                    <= preliminary_corporate_tax_rate
-                    <= 1
-
+                    0 <= preliminary_corporate_tax_rate <= 1
+                    and estimated_depreciation_benefit is not None
                 ):
 
                     estimated_depreciation_tax_savings = (
-
                         estimated_depreciation_benefit
-                        *
-                        preliminary_corporate_tax_rate
-
+                        * preliminary_corporate_tax_rate
                     )
 
-
-        except (
-            ValueError,
-            TypeError
-        ):
+        except (ValueError, TypeError):
 
             print(
                 "Could not calculate "
                 "depreciation tax savings."
             )
-
-
-        # ==========================================
-        # YEAR 1 SAVINGS
-        # ==========================================
-
-        electricity_rate_raw = extracted_data.get(
-            "electric_rate_per_kwh",
-            ""
-        )
-
-
-        try:
-
-            electricity_rate = float(
-
-                str(
-                    electricity_rate_raw
-                )
-                .replace(
-                    "$",
-                    ""
-                )
-                .replace(
-                    ",",
-                    ""
-                )
-                .strip()
-
-            )
-
-
-            if (
-
-                estimated_annual_solar_kwh
-                is not None
-
-                and
-
-                electricity_rate > 0
-
-            ):
-
-                estimated_year_1_savings = (
-
-                    estimated_annual_solar_kwh
-                    *
-                    electricity_rate
-
-                )
-
-
-            if (
-
-                estimated_project_cost
-                is not None
-
-                and
-
-                estimated_year_1_savings
-                is not None
-
-                and
-
-                estimated_year_1_savings > 0
-
-            ):
-
-                simple_payback_years = (
-
-                    estimated_project_cost
-                    /
-                    estimated_year_1_savings
-
-                )
-
-
-        except (
-            ValueError,
-            TypeError
-        ):
-
-            print(
-                "Could not calculate "
-                "financial underwriting."
-            )
-
-
-        # ==========================================
-        # YEAR 1 NET ECONOMIC BENEFIT
-        # ==========================================
-
-        if (
-
-            estimated_year_1_savings
-            is not None
-
-            and
-
-            estimated_depreciation_tax_savings
-            is not None
-
-        ):
-
-            estimated_year_1_net_economic_benefit = (
-
-                estimated_year_1_savings
-                +
-                estimated_depreciation_tax_savings
-
-            )
-
 
         # ==========================================
         # INCENTIVE-ADJUSTED PAYBACK
@@ -1187,31 +776,34 @@ If a value cannot be found, return an empty string.
 
         incentive_adjusted_payback_years = None
 
-
         if (
-
-            estimated_net_project_cost
-            is not None
-
-            and
-
-            estimated_year_1_savings
-            is not None
-
-            and
-
-            estimated_year_1_savings > 0
-
+            estimated_net_project_cost is not None
+            and estimated_year_1_savings is not None
+            and estimated_year_1_savings > 0
         ):
 
             incentive_adjusted_payback_years = (
-
                 estimated_net_project_cost
-                /
-                estimated_year_1_savings
-
+                / estimated_year_1_savings
             )
 
+        # ==========================================
+        # YEAR 1 NET ECONOMIC BENEFIT
+        # ==========================================
+
+        estimated_year_1_net_economic_benefit = None
+
+        if estimated_year_1_savings is not None:
+
+            estimated_year_1_net_economic_benefit = (
+                estimated_year_1_savings
+                + (
+                    estimated_depreciation_tax_savings
+                    if estimated_depreciation_tax_savings
+                    is not None
+                    else 0
+                )
+            )
 
         # ==========================================
         # FINANCIAL UNDERWRITING LOG
@@ -1229,6 +821,22 @@ If a value cannot be found, return an empty string.
         print(
             "Estimated project cost:",
             estimated_project_cost
+        )
+
+        print(
+            "Electricity rate:",
+            electricity_rate_raw
+        )
+
+        print(
+            "Estimated Year 1 savings:",
+            estimated_year_1_savings
+        )
+
+        print(
+            "Simple payback:",
+            simple_payback_years,
+            "years"
         )
 
         print(
@@ -1267,22 +875,6 @@ If a value cannot be found, return an empty string.
         )
 
         print(
-            "Electricity rate:",
-            electricity_rate_raw
-        )
-
-        print(
-            "Estimated Year 1 savings:",
-            estimated_year_1_savings
-        )
-
-        print(
-            "Simple payback:",
-            simple_payback_years,
-            "years"
-        )
-
-        print(
             "Incentive-adjusted payback:",
             incentive_adjusted_payback_years,
             "years"
@@ -1292,7 +884,6 @@ If a value cannot be found, return an empty string.
             "Estimated Year 1 net economic benefit:",
             estimated_year_1_net_economic_benefit
         )
-
 
         # ==========================================
         # UPDATE GHL CONTACT
@@ -1306,16 +897,12 @@ If a value cannot be found, return an empty string.
             "GHL_LOCATION_ID"
         )
 
-
         if contact_id and ghl_api_key:
 
             ghl_url = (
-
                 "https://services.leadconnectorhq.com"
                 f"/contacts/{contact_id}"
-
             )
-
 
             ghl_headers = {
 
@@ -1327,9 +914,7 @@ If a value cannot be found, return an empty string.
 
                 "Content-Type":
                     "application/json"
-
             }
-
 
             ghl_payload = {
 
@@ -1337,9 +922,7 @@ If a value cannot be found, return an empty string.
 
                     # Utility provider
                     {
-                        "id":
-                            "QlceeYQHWz79JpC3RfHG",
-
+                        "id": "QlceeYQHWz79JpC3RfHG",
                         "fieldValue":
                             extracted_data.get(
                                 "utility_provider",
@@ -1349,9 +932,7 @@ If a value cannot be found, return an empty string.
 
                     # Annual kWh
                     {
-                        "id":
-                            "nxlJKpBjr5vFXpsDt86M",
-
+                        "id": "nxlJKpBjr5vFXpsDt86M",
                         "fieldValue":
                             extracted_data.get(
                                 "annual_kwh_usage",
@@ -1361,9 +942,7 @@ If a value cannot be found, return an empty string.
 
                     # Billing period
                     {
-                        "id":
-                            "bJexeasg4bhJN9vZuC6C",
-
+                        "id": "bJexeasg4bhJN9vZuC6C",
                         "fieldValue":
                             extracted_data.get(
                                 "billing_period",
@@ -1373,9 +952,7 @@ If a value cannot be found, return an empty string.
 
                     # Peak demand
                     {
-                        "id":
-                            "ESOf9cNFnZXFkgTvAL4o",
-
+                        "id": "ESOf9cNFnZXFkgTvAL4o",
                         "fieldValue":
                             extracted_data.get(
                                 "peak_demand_kw",
@@ -1385,9 +962,7 @@ If a value cannot be found, return an empty string.
 
                     # Property address
                     {
-                        "id":
-                            "EoeFaBKcFly95M8DGYzH",
-
+                        "id": "EoeFaBKcFly95M8DGYzH",
                         "fieldValue":
                             extracted_data.get(
                                 "property_address",
@@ -1397,9 +972,7 @@ If a value cannot be found, return an empty string.
 
                     # System size
                     {
-                        "id":
-                            "303wqmJNOMRe7fhZ1OTA",
-
+                        "id": "303wqmJNOMRe7fhZ1OTA",
                         "fieldValue":
                             str(
                                 round(
@@ -1414,9 +987,7 @@ If a value cannot be found, return an empty string.
 
                     # Annual solar production
                     {
-                        "id":
-                            "hsDEvEqotfjoHL1bRoS5",
-
+                        "id": "hsDEvEqotfjoHL1bRoS5",
                         "fieldValue":
                             str(
                                 round(
@@ -1431,9 +1002,7 @@ If a value cannot be found, return an empty string.
 
                     # Production per kW
                     {
-                        "id":
-                            "LuMoa9805spakF6q1qi6",
-
+                        "id": "LuMoa9805spakF6q1qi6",
                         "fieldValue":
                             str(
                                 round(
@@ -1448,9 +1017,7 @@ If a value cannot be found, return an empty string.
 
                     # Electricity rate
                     {
-                        "id":
-                            "L7WjNOBcBux2B1mkRBlR",
-
+                        "id": "L7WjNOBcBux2B1mkRBlR",
                         "fieldValue":
                             extracted_data.get(
                                 "electric_rate_per_kwh",
@@ -1458,11 +1025,9 @@ If a value cannot be found, return an empty string.
                             )
                     },
 
-                    # Preliminary tax credit rate
+                    # Tax credit rate
                     {
-                        "id":
-                            "BG2CefNGA9Dz9myuqymJ",
-
+                        "id": "BG2CefNGA9Dz9myuqymJ",
                         "fieldValue":
                             str(
                                 round(
@@ -1477,9 +1042,7 @@ If a value cannot be found, return an empty string.
 
                     # Estimated tax credit
                     {
-                        "id":
-                            "0e349aKLH3y8jfZ0WlpJ",
-
+                        "id": "0e349aKLH3y8jfZ0WlpJ",
                         "fieldValue":
                             str(
                                 round(
@@ -1494,9 +1057,7 @@ If a value cannot be found, return an empty string.
 
                     # Net project cost
                     {
-                        "id":
-                            "Ymvq1fyoArmNlBZZoqmn",
-
+                        "id": "Ymvq1fyoArmNlBZZoqmn",
                         "fieldValue":
                             str(
                                 round(
@@ -1511,9 +1072,7 @@ If a value cannot be found, return an empty string.
 
                     # Estimated depreciation benefit
                     {
-                        "id":
-                            "5TJQOIFicqCs2aIipsFm",
-
+                        "id": "5TJQOIFicqCs2aIipsFm",
                         "fieldValue":
                             str(
                                 round(
@@ -1526,11 +1085,9 @@ If a value cannot be found, return an empty string.
                             else ""
                     },
 
-                    # Estimated depreciation tax savings
+                    # Depreciation tax savings
                     {
-                        "id":
-                            "4Twip5swlOpbwTh4Fcfv",
-
+                        "id": "4Twip5swlOpbwTh4Fcfv",
                         "fieldValue":
                             str(
                                 round(
@@ -1543,28 +1100,9 @@ If a value cannot be found, return an empty string.
                             else ""
                     },
 
-                    # Incentive-adjusted payback
-                    {
-                        "id":
-                            "NABZeM3IEbGMpVWzkXsd",
-
-                        "fieldValue":
-                            str(
-                                round(
-                                    incentive_adjusted_payback_years,
-                                    2
-                                )
-                            )
-                            if incentive_adjusted_payback_years
-                            is not None
-                            else ""
-                    },
-
                     # Year 1 net economic benefit
                     {
-                        "id":
-                            "XGCAReyZJfuI8eLlhFeU",
-
+                        "id": "XGCAReyZJfuI8eLlhFeU",
                         "fieldValue":
                             str(
                                 round(
@@ -1575,12 +1113,24 @@ If a value cannot be found, return an empty string.
                             if estimated_year_1_net_economic_benefit
                             is not None
                             else ""
+                    },
+
+                    # Incentive-adjusted payback
+                    {
+                        "id": "NABZeM3IEbGMpVWzkXsd",
+                        "fieldValue":
+                            str(
+                                round(
+                                    incentive_adjusted_payback_years,
+                                    2
+                                )
+                            )
+                            if incentive_adjusted_payback_years
+                            is not None
+                            else ""
                     }
-
                 ]
-
             }
-
 
             ghl_response = requests.put(
 
@@ -1591,9 +1141,7 @@ If a value cannot be found, return an empty string.
                 json=ghl_payload,
 
                 timeout=30
-
             )
-
 
             print("\n========================")
             print("GHL CONTACT UPDATE")
@@ -1609,35 +1157,56 @@ If a value cannot be found, return an empty string.
                 ghl_response.text
             )
 
-
         else:
 
             print(
                 "Missing Contact ID or GHL API key"
             )
 
-
         # ==========================================
-        # SUCCESS RESPONSE
+        # FINAL RESPONSE
         # ==========================================
 
         return jsonify({
 
-            "status":
-                "success",
+            "status": "success",
 
             "utility_bill_url":
                 bill_url,
 
             "extracted_data":
-                extracted_data
+                extracted_data,
 
+            "financial_underwriting": {
+
+                "project_cost":
+                    estimated_project_cost,
+
+                "year_1_savings":
+                    estimated_year_1_savings,
+
+                "simple_payback":
+                    simple_payback_years,
+
+                "tax_credit":
+                    estimated_tax_credit,
+
+                "net_project_cost":
+                    estimated_net_project_cost,
+
+                "depreciation_benefit":
+                    estimated_depreciation_benefit,
+
+                "depreciation_tax_savings":
+                    estimated_depreciation_tax_savings,
+
+                "year_1_net_economic_benefit":
+                    estimated_year_1_net_economic_benefit,
+
+                "incentive_adjusted_payback":
+                    incentive_adjusted_payback_years
+            }
         })
-
-
-    # ==========================================
-    # GLOBAL ERROR HANDLER
-    # ==========================================
 
     except Exception as e:
 
@@ -1645,31 +1214,17 @@ If a value cannot be found, return an empty string.
         print("ERROR")
         print("========================")
 
-        print(
-            str(e)
-        )
+        print(str(e))
 
         return jsonify({
-
-            "status":
-                "error",
-
-            "message":
-                str(e)
-
+            "status": "error",
+            "message": str(e)
         }), 500
 
-
-# ==========================================
-# START SERVER
-# ==========================================
 
 if __name__ == "__main__":
 
     app.run(
-
         host="0.0.0.0",
-
         port=10000
-
     )
