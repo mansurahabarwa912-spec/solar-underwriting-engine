@@ -1168,7 +1168,7 @@ If a value cannot be found, return an empty string.
                 year_1_net_benefit=
                     estimated_year_1_net_economic_benefit,
 
-                review_flag="PASS"
+                review_flag= underwriting_review_flag
             )
 
             print("\n========================")
@@ -1495,7 +1495,7 @@ If a value cannot be found, return an empty string.
         f"Net Project Cost: ${round(estimated_net_project_cost, 2) if estimated_net_project_cost is not None else 'N/A'}\n"
         f"Depreciation Tax Savings: ${round(estimated_depreciation_tax_savings, 2) if estimated_depreciation_tax_savings is not None else 'N/A'}\n"
         f"Year 1 Net Economic Benefit: ${round(estimated_year_1_net_economic_benefit, 2) if estimated_year_1_net_economic_benefit is not None else 'N/A'}\n"
-        "Review Status: Preliminary PASS\n"
+        f"Review Status: {underwriting_review_flag}\n"
         "IMPORTANT: Preliminary underwriting only. Engineering and tax review required before final investment or project decisions."
     )
 },
