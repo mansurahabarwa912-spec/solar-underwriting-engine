@@ -6,6 +6,187 @@ import requests
 import tempfile
 
 app = Flask(__name__)
+from flask import Flask, request, jsonify
+from openai import OpenAI
+import os
+import json
+import requests
+import tempfile
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle
+)
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
+
+app = Flask(__name__)
+
+
+def create_underwriting_pdf(
+    output_path,
+    property_address,
+    utility_provider,
+    system_size_kw,
+    annual_solar_kwh,
+    project_cost,
+    year_1_savings,
+    simple_payback,
+    tax_credit,
+    net_project_cost,
+    depreciation_tax_savings,
+    incentive_adjusted_payback,
+    year_1_net_benefit,
+    review_flag
+):
+    styles = getSampleStyleSheet()
+
+    document = SimpleDocTemplate(
+        output_path,
+        pagesize=letter,
+        rightMargin=40,
+        leftMargin=40,
+        topMargin=40,
+        bottomMargin=40
+    )
+
+    story = []
+
+    story.append(
+        Paragraph(
+            "PRELIMINARY COMMERCIAL SOLAR UNDERWRITING REPORT",
+            styles["Title"]
+        )
+    )
+
+    story.append(Spacer(1, 12))
+
+    story.append(
+        Paragraph(
+            "For preliminary screening only — subject to engineering, "
+            "utility, legal, and tax review.",
+            styles["Normal"]
+        )
+    )
+
+    story.append(Spacer(1, 20))
+
+    story.append(
+        Paragraph(
+            "<b>PROPERTY & UTILITY</b>",
+            styles["Heading2"]
+        )
+    )
+
+    property_data = [
+        ["Property Address", str(property_address or "N/A")],
+        ["Utility Provider", str(utility_provider or "N/A")],
+        ["Underwriting Review", str(review_flag or "N/A")]
+    ]
+
+    property_table = Table(
+        property_data,
+        colWidths=[2.0 * inch, 4.5 * inch]
+    )
+
+    property_table.setStyle(
+        TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold")
+        ])
+    )
+
+    story.append(property_table)
+
+    story.append(Spacer(1, 20))
+
+    story.append(
+        Paragraph(
+            "<b>SOLAR SYSTEM</b>",
+            styles["Heading2"]
+        )
+    )
+
+    solar_data = [
+        ["Preliminary System Size", f"{system_size_kw:.2f} kW" if system_size_kw is not None else "N/A"],
+        ["Estimated Annual Solar Production", f"{annual_solar_kwh:,.0f} kWh" if annual_solar_kwh is not None else "N/A"]
+    ]
+
+    solar_table = Table(
+        solar_data,
+        colWidths=[3.5 * inch, 3.0 * inch]
+    )
+
+    solar_table.setStyle(
+        TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold")
+        ])
+    )
+
+    story.append(solar_table)
+
+    story.append(Spacer(1, 20))
+
+    story.append(
+        Paragraph(
+            "<b>FINANCIAL UNDERWRITING</b>",
+            styles["Heading2"]
+        )
+    )
+
+    financial_data = [
+        ["Estimated Project Cost", f"${project_cost:,.2f}" if project_cost is not None else "N/A"],
+        ["Estimated Year 1 Savings", f"${year_1_savings:,.2f}" if year_1_savings is not None else "N/A"],
+        ["Simple Payback", f"{simple_payback:.2f} years" if simple_payback is not None else "N/A"],
+        ["Estimated Tax Credit", f"${tax_credit:,.2f}" if tax_credit is not None else "N/A"],
+        ["Estimated Net Project Cost", f"${net_project_cost:,.2f}" if net_project_cost is not None else "N/A"],
+        ["Depreciation Tax Savings", f"${depreciation_tax_savings:,.2f}" if depreciation_tax_savings is not None else "N/A"],
+        ["Incentive-Adjusted Payback", f"{incentive_adjusted_payback:.2f} years" if incentive_adjusted_payback is not None else "N/A"],
+        ["Year 1 Net Economic Benefit", f"${year_1_net_benefit:,.2f}" if year_1_net_benefit is not None else "N/A"]
+    ]
+
+    financial_table = Table(
+        financial_data,
+        colWidths=[3.5 * inch, 3.0 * inch]
+    )
+
+    financial_table.setStyle(
+        TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("VALIGN", (0, 0), (-1, -1), "TOP")
+        ])
+    )
+
+    story.append(financial_table)
+
+    story.append(Spacer(1, 25))
+
+    story.append(
+        Paragraph(
+            "<b>IMPORTANT NOTICE</b>",
+            styles["Heading2"]
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "This report contains preliminary automated estimates. "
+            "It is not a final engineering design, tax opinion, utility "
+            "interconnection study, investment recommendation, or guarantee "
+            "of project economics. Final project decisions should be based "
+            "on qualified engineering, tax, legal, utility, and financial review.",
+            styles["Normal"]
+        )
+    )
+
+    document.build(story)
 
 client = OpenAI(
     api_key=os.environ.get("OPENAI_API_KEY")
