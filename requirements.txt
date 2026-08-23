@@ -3,3 +3,4 @@ gunicorn==23.0.0
 requests==2.32.4
 openai==1.101.0
 reportlab==5.0.1
+cloudinary==1.46.0
