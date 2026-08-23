@@ -4,21 +4,11 @@ import os
 import json
 import requests
 import tempfile
+import re
+
 import cloudinary
 import cloudinary.uploader
 
-app = Flask(__name__)
-cloudinary.config(
-    cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
-    api_key=os.environ.get("CLOUDINARY_API_KEY"),
-    api_secret=os.environ.get("CLOUDINARY_API_SECRET")
-)
-from flask import Flask, request, jsonify
-from openai import OpenAI
-import os
-import json
-import requests
-import tempfile
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import (
     SimpleDocTemplate,
@@ -31,8 +21,127 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 
+
+# ============================================================
+# APP CONFIGURATION
+# ============================================================
+
 app = Flask(__name__)
 
+client = OpenAI(
+    api_key=os.environ.get("OPENAI_API_KEY")
+)
+
+cloudinary.config(
+    cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.environ.get("CLOUDINARY_API_KEY"),
+    api_secret=os.environ.get("CLOUDINARY_API_SECRET")
+)
+
+
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+def clean_number(value):
+    """
+    Convert strings such as:
+    '$1,234.56'
+    '1,234'
+    '1.25 kW'
+    '15.7%'
+    into floats where possible.
+    """
+
+    if value is None:
+        return None
+
+    text = str(value).strip()
+
+    if not text:
+        return None
+
+    text = text.replace(",", "")
+    text = text.replace("$", "")
+    text = text.replace("%", "")
+
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+
+    if not match:
+        return None
+
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
+
+def parse_ai_json(text):
+    """
+    Safely convert the model response into JSON.
+    """
+
+    if not text:
+        return {}
+
+    text = text.strip()
+
+    # Remove markdown fences if the model returns them.
+    if text.startswith("```"):
+        text = text.replace("```json", "")
+        text = text.replace("```", "")
+        text = text.strip()
+
+    # Find the first JSON object if there is extra text.
+    start = text.find("{")
+    end = text.rfind("}")
+
+    if start >= 0 and end >= 0:
+        text = text[start:end + 1]
+
+    try:
+        return json.loads(text)
+    except Exception:
+        return {}
+
+
+def get_bill_url(bill_data):
+    """
+    Handles the different formats GHL can send for a file field.
+    """
+
+    if isinstance(bill_data, str):
+        return bill_data
+
+    if isinstance(bill_data, list) and len(bill_data) > 0:
+
+        first_bill = bill_data[0]
+
+        if isinstance(first_bill, str):
+            return first_bill
+
+        if isinstance(first_bill, dict):
+            return (
+                first_bill.get("url")
+                or first_bill.get("fileUrl")
+                or first_bill.get("file_url")
+                or first_bill.get("downloadUrl")
+            )
+
+    if isinstance(bill_data, dict):
+        return (
+            bill_data.get("url")
+            or bill_data.get("fileUrl")
+            or bill_data.get("file_url")
+            or bill_data.get("downloadUrl")
+        )
+
+    return None
+
+
+# ============================================================
+# PDF GENERATOR
+# ============================================================
 
 def create_underwriting_pdf(
     output_path,
@@ -50,6 +159,7 @@ def create_underwriting_pdf(
     year_1_net_benefit,
     review_flag
 ):
+
     styles = getSampleStyleSheet()
 
     document = SimpleDocTemplate(
@@ -120,8 +230,18 @@ def create_underwriting_pdf(
     )
 
     solar_data = [
-        ["Preliminary System Size", f"{system_size_kw:.2f} kW" if system_size_kw is not None else "N/A"],
-        ["Estimated Annual Solar Production", f"{annual_solar_kwh:,.0f} kWh" if annual_solar_kwh is not None else "N/A"]
+        [
+            "Preliminary System Size",
+            f"{system_size_kw:.2f} kW"
+            if system_size_kw is not None
+            else "N/A"
+        ],
+        [
+            "Estimated Annual Solar Production",
+            f"{annual_solar_kwh:,.0f} kWh"
+            if annual_solar_kwh is not None
+            else "N/A"
+        ]
     ]
 
     solar_table = Table(
@@ -148,14 +268,54 @@ def create_underwriting_pdf(
     )
 
     financial_data = [
-        ["Estimated Project Cost", f"${project_cost:,.2f}" if project_cost is not None else "N/A"],
-        ["Estimated Year 1 Savings", f"${year_1_savings:,.2f}" if year_1_savings is not None else "N/A"],
-        ["Simple Payback", f"{simple_payback:.2f} years" if simple_payback is not None else "N/A"],
-        ["Estimated Tax Credit", f"${tax_credit:,.2f}" if tax_credit is not None else "N/A"],
-        ["Estimated Net Project Cost", f"${net_project_cost:,.2f}" if net_project_cost is not None else "N/A"],
-        ["Depreciation Tax Savings", f"${depreciation_tax_savings:,.2f}" if depreciation_tax_savings is not None else "N/A"],
-        ["Incentive-Adjusted Payback", f"{incentive_adjusted_payback:.2f} years" if incentive_adjusted_payback is not None else "N/A"],
-        ["Year 1 Net Economic Benefit", f"${year_1_net_benefit:,.2f}" if year_1_net_benefit is not None else "N/A"]
+        [
+            "Estimated Project Cost",
+            f"${project_cost:,.2f}"
+            if project_cost is not None
+            else "N/A"
+        ],
+        [
+            "Estimated Year 1 Savings",
+            f"${year_1_savings:,.2f}"
+            if year_1_savings is not None
+            else "N/A"
+        ],
+        [
+            "Simple Payback",
+            f"{simple_payback:.2f} years"
+            if simple_payback is not None
+            else "N/A"
+        ],
+        [
+            "Estimated Tax Credit",
+            f"${tax_credit:,.2f}"
+            if tax_credit is not None
+            else "N/A"
+        ],
+        [
+            "Estimated Net Project Cost",
+            f"${net_project_cost:,.2f}"
+            if net_project_cost is not None
+            else "N/A"
+        ],
+        [
+            "Depreciation Tax Savings",
+            f"${depreciation_tax_savings:,.2f}"
+            if depreciation_tax_savings is not None
+            else "N/A"
+        ],
+        [
+            "Incentive-Adjusted Payback",
+            f"{incentive_adjusted_payback:.2f} years"
+            if incentive_adjusted_payback is not None
+            else "N/A"
+        ],
+        [
+            "Year 1 Net Economic Benefit",
+            f"${year_1_net_benefit:,.2f}"
+            if year_1_net_benefit is not None
+            else "N/A"
+        ]
     ]
 
     financial_table = Table(
@@ -195,15 +355,22 @@ def create_underwriting_pdf(
 
     document.build(story)
 
-client = OpenAI(
-    api_key=os.environ.get("OPENAI_API_KEY")
-)
 
+# ============================================================
+# HOME
+# ============================================================
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"status": "online"})
 
+    return jsonify({
+        "status": "online"
+    })
+
+
+# ============================================================
+# WEBHOOK
+# ============================================================
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -216,78 +383,65 @@ def webhook():
 
     print(json.dumps(data, indent=4))
 
-    # ==========================================
-    # GET CUSTOM DATA FROM GHL
-    # ==========================================
-
-    custom_data = data.get("customData", {})
-
-    bill_data = custom_data.get("utility_bill")
-
-    print("\n========================")
-    print("UTILITY BILL DATA")
-    print("========================")
-
-    print(bill_data)
-
-    # ==========================================
-    # FIND UTILITY BILL URL
-    # ==========================================
-
-    bill_url = None
-
-    if isinstance(bill_data, str):
-
-        bill_url = bill_data
-
-    elif isinstance(bill_data, list) and len(bill_data) > 0:
-
-        first_bill = bill_data[0]
-
-        if isinstance(first_bill, str):
-
-            bill_url = first_bill
-
-        elif isinstance(first_bill, dict):
-
-            bill_url = (
-                first_bill.get("url")
-                or first_bill.get("fileUrl")
-                or first_bill.get("file_url")
-                or first_bill.get("downloadUrl")
-            )
-
-    elif isinstance(bill_data, dict):
-
-        bill_url = (
-            bill_data.get("url")
-            or bill_data.get("fileUrl")
-            or bill_data.get("file_url")
-            or bill_data.get("downloadUrl")
-        )
-
-    if not bill_url:
-
-        print("\n========================")
-        print("NO UTILITY BILL URL FOUND")
-        print("========================")
-
-        return jsonify({
-            "status": "success",
-            "message": "No utility bill URL received"
-        })
-
-    print("\n========================")
-    print("UTILITY BILL URL FOUND")
-    print("========================")
-
-    print(bill_url)
-
     try:
 
-        # ==========================================
+        # ====================================================
+        # GET CUSTOM DATA FROM GHL
+        # ====================================================
+
+        custom_data = data.get(
+            "customData",
+            {}
+        )
+
+        contact_id = custom_data.get(
+            "contact_id"
+        )
+
+        bill_data = custom_data.get(
+            "utility_bill"
+        )
+
+        print("\n========================")
+        print("UTILITY BILL DATA")
+        print("========================")
+
+        print(bill_data)
+
+        print("\n========================")
+        print("CONTACT ID")
+        print("========================")
+
+        print(contact_id)
+
+        # ====================================================
+        # FIND UTILITY BILL URL
+        # ====================================================
+
+        bill_url = get_bill_url(
+            bill_data
+        )
+
+        if not bill_url:
+
+            print("\n========================")
+            print("NO UTILITY BILL URL FOUND")
+            print("========================")
+
+            return jsonify({
+                "status": "success",
+                "message": "No utility bill URL received"
+            })
+
+        print("\n========================")
+        print("UTILITY BILL URL FOUND")
+        print("========================")
+
+        print(bill_url)
+
+        # ====================================================
         # DOWNLOAD UTILITY BILL
-        # ==========================================
+        # ====================================================
 
         response = requests.get(
             bill_url,
@@ -298,9 +452,21 @@ def webhook():
         print("UTILITY BILL DOWNLOAD")
         print("========================")
 
-        print("Status code:", response.status_code)
-        print("File size:", len(response.content), "bytes")
-        print("Content type:", response.headers.get("Content-Type"))
+        print(
+            "Status code:",
+            response.status_code
+        )
+
+        print(
+            "File size:",
+            len(response.content),
+            "bytes"
+        )
+
+        print(
+            "Content type:",
+            response.headers.get("Content-Type")
+        )
 
         if response.status_code != 200:
 
@@ -309,37 +475,117 @@ def webhook():
                 "message": "Could not download utility bill"
             }), 400
 
-        # ==========================================
-        # SAVE PDF TEMPORARILY
-        # ==========================================
+        # ====================================================
+        # SAVE PDF
+        # ====================================================
 
         with tempfile.NamedTemporaryFile(
             suffix=".pdf",
             delete=False
         ) as temp_file:
 
-            temp_file.write(response.content)
+            temp_file.write(
+                response.content
+            )
 
             pdf_path = temp_file.name
 
-        # ==========================================
+        # ====================================================
         # UPLOAD PDF TO OPENAI
-        # ==========================================
+        # ====================================================
 
-        uploaded_file = client.files.create(
-            file=open(pdf_path, "rb"),
-            purpose="user_data"
-        )
+        with open(
+            pdf_path,
+            "rb"
+        ) as pdf_file:
+
+            uploaded_file = client.files.create(
+                file=pdf_file,
+                purpose="user_data"
+            )
 
         print("\n========================")
         print("FILE UPLOADED TO OPENAI")
         print("========================")
 
-        print("File ID:", uploaded_file.id)
+        print(
+            "File ID:",
+            uploaded_file.id
+        )
 
-        # ==========================================
+        # ====================================================
         # AI UTILITY BILL EXTRACTION
-        # ==========================================
+        # ====================================================
+
+        extraction_prompt = """
+
+Read this commercial utility bill carefully.
+
+Extract the following information.
+
+1. Utility provider name
+2. Annual electricity usage in kWh
+3. Current billing-period electricity usage in kWh
+4. Peak demand in kW
+5. Billing period
+6. Service/property address
+7. Electricity energy rate in $/kWh
+
+IMPORTANT:
+
+If the bill contains a usage history, monthly history,
+12-month usage table, annual usage, or previous-month
+usage information, use that information to determine
+annual electricity usage whenever possible.
+
+If a reliable annual usage figure is NOT present,
+return the current billing-period kWh separately.
+
+Do NOT invent annual usage.
+
+For electricity rate:
+
+Use an explicit energy/supply $/kWh rate when available.
+
+If there is no explicit $/kWh rate, calculate it ONLY when
+possible using energy/supply charges divided by electricity
+kWh usage.
+
+Do NOT use:
+
+- demand charges
+- taxes
+- fixed customer charges
+- late fees
+- unrelated delivery charges
+
+For peak demand:
+
+Look specifically for:
+
+- peak demand
+- maximum demand
+- demand kW
+- peak kW
+- maximum kW
+
+If it is not present, return an empty string.
+
+Return ONLY valid JSON in exactly this format:
+
+{
+    "utility_provider": "",
+    "annual_kwh_usage": "",
+    "current_period_kwh": "",
+    "peak_demand_kw": "",
+    "billing_period": "",
+    "property_address": "",
+    "electric_rate_per_kwh": ""
+}
+
+If a value cannot be found, return an empty string.
+
+"""
 
         result = client.responses.create(
 
@@ -359,51 +605,7 @@ def webhook():
 
                         {
                             "type": "input_text",
-
-                            "text": """
-Read this utility bill carefully.
-
-Extract these fields:
-
-1. Utility provider name
-2. Annual electricity usage in kWh
-3. Peak demand in kW
-4. Billing period
-5. service address
-6. Electricity energy rate in $/kWh
-
-Find the rate actually charged for electricity energy consumption.
-
-Use an explicit $/kWh energy or supply rate if the bill provides one.
-
-If there is no explicit $/kWh rate, calculate it ONLY when possible using:
-
-energy/supply charges ÷ electricity kWh usage.
-
-Do NOT use:
-
-- demand charges
-- taxes
-- fixed monthly/customer charges
-- late fees
-- unrelated delivery charges
-
-If a reliable energy rate cannot be determined from the bill,
-return an empty string.
-
-Return ONLY valid JSON in exactly this format:
-
-{
-    "utility_provider": "",
-    "annual_kwh_usage": "",
-    "peak_demand_kw": "",
-    "billing_period": "",
-    "property_address": "",
-    "electric_rate_per_kwh": ""
-}
-
-If a value cannot be found, return an empty string.
-"""
+                            "text": extraction_prompt
                         }
 
                     ]
@@ -416,50 +618,17 @@ If a value cannot be found, return an empty string.
         print("AI EXTRACTION")
         print("========================")
 
-        print(result.output_text)
+        print(
+            result.output_text
+        )
 
-        contact_id = custom_data.get("contact_id")
+        # ====================================================
+        # PARSE AI RESPONSE
+        # ====================================================
 
-        print("\n========================")
-        print("CONTACT ID")
-        print("========================")
-
-        print(contact_id)
-
-        # ==========================================
-        # CONVERT AI RESPONSE TO JSON
-        # ==========================================
-
-        try:
-
-            ai_text = result.output_text.strip()
-
-            if ai_text.startswith("```"):
-
-                ai_text = ai_text.replace(
-                    "```json",
-                    ""
-                )
-
-                ai_text = ai_text.replace(
-                    "```",
-                    ""
-                )
-
-                ai_text = ai_text.strip()
-
-            extracted_data = json.loads(ai_text)
-
-        except Exception as e:
-
-            print("\n========================")
-            print("JSON EXTRACTION ERROR")
-            print("========================")
-
-            print("Error:", str(e))
-            print("Raw AI response:", result.output_text)
-
-            extracted_data = {}
+        extracted_data = parse_ai_json(
+            result.output_text
+        )
 
         print("\n========================")
         print("EXTRACTED DATA")
@@ -472,9 +641,9 @@ If a value cannot be found, return an empty string.
             )
         )
 
-        # ==========================================
-        # PROPERTY ADDRESS → COORDINATES
-        # ==========================================
+        # ====================================================
+        # PROPERTY ADDRESS
+        # ====================================================
 
         property_address = extracted_data.get(
             "property_address",
@@ -490,72 +659,88 @@ If a value cannot be found, return an empty string.
                 "GOOGLE_MAPS_API_KEY"
             )
 
-            geocode_url = (
-                "https://maps.googleapis.com/maps/api/geocode/json"
-            )
+            if google_api_key:
 
-            geocode_response = requests.get(
-                geocode_url,
-
-                params={
-                    "address": property_address,
-                    "key": google_api_key
-                },
-
-                timeout=30
-            )
-
-            geocode_data = geocode_response.json()
-
-            print("\n========================")
-            print("GOOGLE GEOCODING RESPONSE")
-            print("========================")
-
-            print(
-                "Status:",
-                geocode_data.get("status")
-            )
-
-            print(
-                "Error:",
-                geocode_data.get(
-                    "error_message",
-                    "None"
-                )
-            )
-
-            if (
-                geocode_data.get("status") == "OK"
-                and geocode_data.get("results")
-            ):
-
-                location = (
-                    geocode_data["results"][0]
-                    ["geometry"]
-                    ["location"]
+                geocode_url = (
+                    "https://maps.googleapis.com/maps/api/geocode/json"
                 )
 
-                latitude = location.get(
-                    "lat",
-                    ""
+                geocode_response = requests.get(
+
+                    geocode_url,
+
+                    params={
+                        "address": property_address,
+                        "key": google_api_key
+                    },
+
+                    timeout=30
                 )
 
-                longitude = location.get(
-                    "lng",
-                    ""
+                geocode_data = (
+                    geocode_response.json()
                 )
+
+                print("\n========================")
+                print("GOOGLE GEOCODING RESPONSE")
+                print("========================")
+
+                print(
+                    "Status:",
+                    geocode_data.get("status")
+                )
+
+                print(
+                    "Error:",
+                    geocode_data.get(
+                        "error_message",
+                        "None"
+                    )
+                )
+
+                if (
+                    geocode_data.get("status") == "OK"
+                    and geocode_data.get("results")
+                ):
+
+                    location = (
+                        geocode_data["results"][0]
+                        ["geometry"]
+                        ["location"]
+                    )
+
+                    latitude = location.get(
+                        "lat",
+                        ""
+                    )
+
+                    longitude = location.get(
+                        "lng",
+                        ""
+                    )
 
         print("\n========================")
         print("PROPERTY COORDINATES")
         print("========================")
 
-        print("Address:", property_address)
-        print("Latitude:", latitude)
-        print("Longitude:", longitude)
+        print(
+            "Address:",
+            property_address
+        )
 
-        # ==========================================
-        # NREL PVWATTS
-        # ==========================================
+        print(
+            "Latitude:",
+            latitude
+        )
+
+        print(
+            "Longitude:",
+            longitude
+        )
+
+        # ====================================================
+        # NREL PVWATTS V8
+        # ====================================================
 
         nrel_api_key = os.environ.get(
             "NREL_API_KEY"
@@ -563,22 +748,37 @@ If a value cannot be found, return an empty string.
 
         pvwatts_data = {}
 
+        annual_production_per_kw = None
+
         print("\n========================")
         print("PVWATTS CHECK")
         print("========================")
 
-        print("Latitude:", latitude)
-        print("Longitude:", longitude)
+        print(
+            "Latitude:",
+            latitude
+        )
+
+        print(
+            "Longitude:",
+            longitude
+        )
 
         print(
             "NREL API key found:",
             bool(nrel_api_key)
         )
 
-        if latitude and longitude and nrel_api_key:
+        if (
+            latitude
+            and longitude
+            and nrel_api_key
+        ):
 
+            # CORRECT NREL PVWATTS V8 ENDPOINT
             pvwatts_url = (
-                "https://developer.nlr.gov/api/pvwatts/v8.json"
+                "https://developer.nrel.gov/"
+                "api/pvwatts/v8.json"
             )
 
             pvwatts_params = {
@@ -589,6 +789,7 @@ If a value cannot be found, return an empty string.
 
                 "lon": longitude,
 
+                # 1 kW baseline
                 "system_capacity": 1,
 
                 "azimuth": 180,
@@ -605,8 +806,11 @@ If a value cannot be found, return an empty string.
             try:
 
                 pvwatts_response = requests.get(
+
                     pvwatts_url,
+
                     params=pvwatts_params,
+
                     timeout=30
                 )
 
@@ -630,76 +834,87 @@ If a value cannot be found, return an empty string.
                     )
                 )
 
-            except requests.exceptions.RequestException as e:
+                if pvwatts_response.status_code == 200:
+
+                    annual_production_per_kw = clean_number(
+                        pvwatts_data
+                        .get("outputs", {})
+                        .get("ac_annual")
+                    )
+
+            except Exception as e:
 
                 print("\n========================")
-                print("PVWATTS CONNECTION ERROR")
+                print("PVWATTS ERROR")
                 print("========================")
 
-                print(str(e))
+                print(
+                    str(e)
+                )
 
-                pvwatts_data = {}
+        # ====================================================
+        # USAGE CALCULATION
+        # ====================================================
 
-        # ==========================================
-        # PRELIMINARY SOLAR SYSTEM SIZING
-        # ==========================================
-
-        annual_kwh_raw = extracted_data.get(
-            "annual_kwh_usage",
-            ""
+        annual_kwh = clean_number(
+            extracted_data.get(
+                "annual_kwh_usage"
+            )
         )
 
-        peak_demand_raw = extracted_data.get(
-            "peak_demand_kw",
-            ""
+        current_period_kwh = clean_number(
+            extracted_data.get(
+                "current_period_kwh"
+            )
         )
+
+        peak_demand_kw = clean_number(
+            extracted_data.get(
+                "peak_demand_kw"
+            )
+        )
+
+        usage_source = "bill_annual"
+
+        # If annual usage isn't available,
+        # annualize the current billing period.
+        if (
+            annual_kwh is None
+            and current_period_kwh is not None
+            and current_period_kwh > 0
+        ):
+
+            annual_kwh = (
+                current_period_kwh * 12
+            )
+
+            usage_source = (
+                "annualized_current_billing_period"
+            )
+
+        # ====================================================
+        # PRELIMINARY SYSTEM SIZING
+        # ====================================================
 
         preliminary_system_size_kw = None
 
-        annual_production_per_kw = None
-
         estimated_annual_solar_kwh = None
 
-        try:
+        if (
+            annual_kwh is not None
+            and annual_kwh > 0
+            and annual_production_per_kw is not None
+            and annual_production_per_kw > 0
+        ):
 
-            annual_kwh = float(
-                str(annual_kwh_raw)
-                .replace(",", "")
-                .strip()
+            preliminary_system_size_kw = (
+                annual_kwh
+                / annual_production_per_kw
             )
 
-            peak_demand_kw = float(
-                str(peak_demand_raw)
-                .replace(",", "")
-                .strip()
-            )
-
-            annual_production_per_kw = float(
-                pvwatts_data
-                .get("outputs", {})
-                .get("ac_annual", 0)
-            )
-
-            if (
-                annual_kwh > 0
-                and annual_production_per_kw > 0
-            ):
-
-                preliminary_system_size_kw = (
-                    annual_kwh
-                    / annual_production_per_kw
-                )
-
-                estimated_annual_solar_kwh = (
-                    preliminary_system_size_kw
-                    * annual_production_per_kw
-                )
-
-        except (ValueError, TypeError):
-
-            print(
-                "Could not calculate "
-                "preliminary system size."
+            estimated_annual_solar_kwh = (
+                preliminary_system_size_kw
+                * annual_production_per_kw
             )
 
         print("\n========================")
@@ -708,13 +923,24 @@ If a value cannot be found, return an empty string.
 
         print(
             "Annual usage:",
-            annual_kwh_raw,
+            annual_kwh,
+            "kWh"
+        )
+
+        print(
+            "Usage source:",
+            usage_source
+        )
+
+        print(
+            "Current period usage:",
+            current_period_kwh,
             "kWh"
         )
 
         print(
             "Peak demand:",
-            peak_demand_raw,
+            peak_demand_kw,
             "kW"
         )
 
@@ -736,16 +962,19 @@ If a value cannot be found, return an empty string.
             "kWh/year"
         )
 
-        # ==========================================
+        # ====================================================
         # FINANCIAL VARIABLES
-        # ==========================================
+        # ====================================================
 
-        cost_per_watt = float(
+        cost_per_watt = clean_number(
             os.environ.get(
                 "SOLAR_COST_PER_WATT",
                 "1.50"
             )
         )
+
+        if cost_per_watt is None:
+            cost_per_watt = 1.50
 
         estimated_project_cost = None
 
@@ -753,9 +982,9 @@ If a value cannot be found, return an empty string.
 
         simple_payback_years = None
 
-        # ==========================================
+        # ====================================================
         # PROJECT COST
-        # ==========================================
+        # ====================================================
 
         if preliminary_system_size_kw is not None:
 
@@ -765,57 +994,45 @@ If a value cannot be found, return an empty string.
                 * cost_per_watt
             )
 
-        # ==========================================
-        # ELECTRICITY RATE + YEAR 1 SAVINGS
-        # ==========================================
+        # ====================================================
+        # ELECTRICITY RATE
+        # ====================================================
 
-        electricity_rate_raw = extracted_data.get(
-            "electric_rate_per_kwh",
-            ""
+        electricity_rate = clean_number(
+            extracted_data.get(
+                "electric_rate_per_kwh"
+            )
         )
 
-        electricity_rate = None
+        if (
+            estimated_annual_solar_kwh is not None
+            and electricity_rate is not None
+            and electricity_rate > 0
+        ):
 
-        try:
-
-            electricity_rate = float(
-                str(electricity_rate_raw)
-                .replace("$", "")
-                .replace(",", "")
-                .strip()
+            estimated_year_1_savings = (
+                estimated_annual_solar_kwh
+                * electricity_rate
             )
 
-            if (
-                estimated_annual_solar_kwh is not None
-                and electricity_rate > 0
-            ):
+        # ====================================================
+        # SIMPLE PAYBACK
+        # ====================================================
 
-                estimated_year_1_savings = (
-                    estimated_annual_solar_kwh
-                    * electricity_rate
-                )
+        if (
+            estimated_project_cost is not None
+            and estimated_year_1_savings is not None
+            and estimated_year_1_savings > 0
+        ):
 
-            if (
-                estimated_project_cost is not None
-                and estimated_year_1_savings is not None
-                and estimated_year_1_savings > 0
-            ):
-
-                simple_payback_years = (
-                    estimated_project_cost
-                    / estimated_year_1_savings
-                )
-
-        except (ValueError, TypeError):
-
-            print(
-                "Could not calculate "
-                "Year 1 savings."
+            simple_payback_years = (
+                estimated_project_cost
+                / estimated_year_1_savings
             )
 
-        # ==========================================
+        # ====================================================
         # TAX CREDIT
-        # ==========================================
+        # ====================================================
 
         tax_credit_rate_raw = os.environ.get(
             "PRELIMINARY_TAX_CREDIT_RATE",
@@ -828,21 +1045,19 @@ If a value cannot be found, return an empty string.
 
         estimated_net_project_cost = None
 
-        try:
+        if str(
+            tax_credit_rate_raw
+        ).strip():
 
-            if str(
-                tax_credit_rate_raw
-            ).strip() != "":
-
-                preliminary_tax_credit_rate = (
-                    float(
-                        str(
-                            tax_credit_rate_raw
-                        )
-                        .replace("%", "")
-                        .strip()
-                    ) / 100
+            preliminary_tax_credit_rate = (
+                clean_number(
+                    tax_credit_rate_raw
                 )
+            )
+
+            if preliminary_tax_credit_rate is not None:
+
+                preliminary_tax_credit_rate /= 100
 
                 if (
                     0 <= preliminary_tax_credit_rate <= 1
@@ -859,16 +1074,9 @@ If a value cannot be found, return an empty string.
                         - estimated_tax_credit
                     )
 
-        except (ValueError, TypeError):
-
-            print(
-                "Could not calculate "
-                "preliminary tax credit."
-            )
-
-        # ==========================================
+        # ====================================================
         # DEPRECIATION
-        # ==========================================
+        # ====================================================
 
         depreciation_rate_raw = os.environ.get(
             "PRELIMINARY_DEPRECIATION_RATE",
@@ -879,21 +1087,19 @@ If a value cannot be found, return an empty string.
 
         estimated_depreciation_benefit = None
 
-        try:
+        if str(
+            depreciation_rate_raw
+        ).strip():
 
-            if str(
-                depreciation_rate_raw
-            ).strip() != "":
-
-                preliminary_depreciation_rate = (
-                    float(
-                        str(
-                            depreciation_rate_raw
-                        )
-                        .replace("%", "")
-                        .strip()
-                    ) / 100
+            preliminary_depreciation_rate = (
+                clean_number(
+                    depreciation_rate_raw
                 )
+            )
+
+            if preliminary_depreciation_rate is not None:
+
+                preliminary_depreciation_rate /= 100
 
                 if (
                     0 <= preliminary_depreciation_rate <= 1
@@ -905,16 +1111,9 @@ If a value cannot be found, return an empty string.
                         * preliminary_depreciation_rate
                     )
 
-        except (ValueError, TypeError):
-
-            print(
-                "Could not calculate "
-                "depreciation benefit."
-            )
-
-        # ==========================================
+        # ====================================================
         # CORPORATE TAX RATE
-        # ==========================================
+        # ====================================================
 
         corporate_tax_rate_raw = os.environ.get(
             "PRELIMINARY_CORPORATE_TAX_RATE",
@@ -925,21 +1124,19 @@ If a value cannot be found, return an empty string.
 
         estimated_depreciation_tax_savings = None
 
-        try:
+        if str(
+            corporate_tax_rate_raw
+        ).strip():
 
-            if str(
-                corporate_tax_rate_raw
-            ).strip() != "":
-
-                preliminary_corporate_tax_rate = (
-                    float(
-                        str(
-                            corporate_tax_rate_raw
-                        )
-                        .replace("%", "")
-                        .strip()
-                    ) / 100
+            preliminary_corporate_tax_rate = (
+                clean_number(
+                    corporate_tax_rate_raw
                 )
+            )
+
+            if preliminary_corporate_tax_rate is not None:
+
+                preliminary_corporate_tax_rate /= 100
 
                 if (
                     0 <= preliminary_corporate_tax_rate <= 1
@@ -951,16 +1148,9 @@ If a value cannot be found, return an empty string.
                         * preliminary_corporate_tax_rate
                     )
 
-        except (ValueError, TypeError):
-
-            print(
-                "Could not calculate "
-                "depreciation tax savings."
-            )
-
-        # ==========================================
+        # ====================================================
         # INCENTIVE-ADJUSTED PAYBACK
-        # ==========================================
+        # ====================================================
 
         incentive_adjusted_payback_years = None
 
@@ -975,9 +1165,9 @@ If a value cannot be found, return an empty string.
                 / estimated_year_1_savings
             )
 
-        # ==========================================
+        # ====================================================
         # YEAR 1 NET ECONOMIC BENEFIT
-        # ==========================================
+        # ====================================================
 
         estimated_year_1_net_economic_benefit = None
 
@@ -993,34 +1183,53 @@ If a value cannot be found, return an empty string.
                 )
             )
 
-         # ==========================================
-        # UNDERWRITING QUALITY CONTROL
-        # ==========================================
-
-        underwriting_review_flag = "PRELIMINARY - PASS"
+        # ====================================================
+        # QUALITY CONTROL
+        # ====================================================
 
         missing_inputs = []
 
-        if not annual_kwh_raw:
-            missing_inputs.append("Annual kWh")
-
-        if not peak_demand_raw:
-            missing_inputs.append("Peak demand")
+        if annual_kwh is None or annual_kwh <= 0:
+            missing_inputs.append(
+                "Annual electricity usage"
+            )
 
         if not property_address:
-            missing_inputs.append("Property address")
+            missing_inputs.append(
+                "Property address"
+            )
 
-        if annual_production_per_kw is None or annual_production_per_kw <= 0:
-            missing_inputs.append("PVWatts production")
+        if (
+            annual_production_per_kw is None
+            or annual_production_per_kw <= 0
+        ):
+            missing_inputs.append(
+                "PVWatts production"
+            )
 
-        if electricity_rate is None or electricity_rate <= 0:
-            missing_inputs.append("Electricity rate")
+        if (
+            electricity_rate is None
+            or electricity_rate <= 0
+        ):
+            missing_inputs.append(
+                "Electricity rate"
+            )
 
-        if estimated_project_cost is None or estimated_project_cost <= 0:
-            missing_inputs.append("Project cost")
+        if (
+            estimated_project_cost is None
+            or estimated_project_cost <= 0
+        ):
+            missing_inputs.append(
+                "Project cost"
+            )
 
-        if estimated_year_1_savings is None or estimated_year_1_savings <= 0:
-            missing_inputs.append("Year 1 savings")
+        if (
+            estimated_year_1_savings is None
+            or estimated_year_1_savings <= 0
+        ):
+            missing_inputs.append(
+                "Year 1 savings"
+            )
 
         if missing_inputs:
 
@@ -1039,14 +1248,15 @@ If a value cannot be found, return an empty string.
                 "PRELIMINARY - INCENTIVE REVIEW REQUIRED"
             )
 
-        print(
-            "Underwriting review flag:",
-            underwriting_review_flag
-        )    
+        else:
 
-        # ==========================================
-        # FINANCIAL UNDERWRITING LOG
-        # ==========================================
+            underwriting_review_flag = (
+                "PRELIMINARY - PASS"
+            )
+
+        # ====================================================
+        # LOG FINANCIAL UNDERWRITING
+        # ====================================================
 
         print("\n========================")
         print("FINANCIAL UNDERWRITING")
@@ -1064,7 +1274,7 @@ If a value cannot be found, return an empty string.
 
         print(
             "Electricity rate:",
-            electricity_rate_raw
+            electricity_rate
         )
 
         print(
@@ -1074,8 +1284,7 @@ If a value cannot be found, return an empty string.
 
         print(
             "Simple payback:",
-            simple_payback_years,
-            "years"
+            simple_payback_years
         )
 
         print(
@@ -1094,48 +1303,45 @@ If a value cannot be found, return an empty string.
         )
 
         print(
-            "Depreciation rate:",
-            preliminary_depreciation_rate
-        )
-
-        print(
-            "Estimated depreciation benefit:",
+            "Depreciation benefit:",
             estimated_depreciation_benefit
         )
 
         print(
-            "Corporate tax rate:",
-            preliminary_corporate_tax_rate
-        )
-
-        print(
-            "Estimated depreciation tax savings:",
+            "Depreciation tax savings:",
             estimated_depreciation_tax_savings
         )
 
         print(
             "Incentive-adjusted payback:",
-            incentive_adjusted_payback_years,
-            "years"
+            incentive_adjusted_payback_years
         )
 
         print(
-            "Estimated Year 1 net economic benefit:",
+            "Year 1 net economic benefit:",
             estimated_year_1_net_economic_benefit
         )
 
-        # ==========================================
-        # GENERATE PRELIMINARY UNDERWRITING PDF
-        # ==========================================
+        print(
+            "Review flag:",
+            underwriting_review_flag
+        )
+
+        # ====================================================
+        # GENERATE PDF
+        # ====================================================
 
         pdf_path = os.path.join(
             tempfile.gettempdir(),
-            f"underwriting_{contact_id}.pdf"
+            f"underwriting_{contact_id or 'unknown'}.pdf"
         )
+
+        pdf_url = None
 
         try:
 
             create_underwriting_pdf(
+
                 output_path=pdf_path,
 
                 property_address=property_address,
@@ -1145,19 +1351,26 @@ If a value cannot be found, return an empty string.
                     ""
                 ),
 
-                system_size_kw=preliminary_system_size_kw,
+                system_size_kw=
+                    preliminary_system_size_kw,
 
-                annual_solar_kwh=estimated_annual_solar_kwh,
+                annual_solar_kwh=
+                    estimated_annual_solar_kwh,
 
-                project_cost=estimated_project_cost,
+                project_cost=
+                    estimated_project_cost,
 
-                year_1_savings=estimated_year_1_savings,
+                year_1_savings=
+                    estimated_year_1_savings,
 
-                simple_payback=simple_payback_years,
+                simple_payback=
+                    simple_payback_years,
 
-                tax_credit=estimated_tax_credit,
+                tax_credit=
+                    estimated_tax_credit,
 
-                net_project_cost=estimated_net_project_cost,
+                net_project_cost=
+                    estimated_net_project_cost,
 
                 depreciation_tax_savings=
                     estimated_depreciation_tax_savings,
@@ -1168,38 +1381,51 @@ If a value cannot be found, return an empty string.
                 year_1_net_benefit=
                     estimated_year_1_net_economic_benefit,
 
-                review_flag= underwriting_review_flag
+                review_flag=
+                    underwriting_review_flag
             )
 
             print("\n========================")
             print("UNDERWRITING PDF")
             print("========================")
 
-            print("PDF created:", pdf_path)
+            print(
+                "PDF created:",
+                pdf_path
+            )
 
-            # ==========================================
-            # UPLOAD UNDERWRITING PDF TO CLOUDINARY
-            # ==========================================
+            # =================================================
+            # CLOUDINARY UPLOAD
+            # =================================================
 
-            pdf_url = None
-
-            if pdf_path:
+            if (
+                os.environ.get("CLOUDINARY_CLOUD_NAME")
+                and os.environ.get("CLOUDINARY_API_KEY")
+                and os.environ.get("CLOUDINARY_API_SECRET")
+            ):
 
                 try:
 
-                    upload_result = cloudinary.uploader.upload(
-                        pdf_path,
-                        resource_type="raw",
-                        folder="solar_underwriting"
+                    upload_result = (
+                        cloudinary.uploader.upload(
+                            pdf_path,
+                            resource_type="raw",
+                            folder="solar_underwriting"
+                        )
                     )
 
-                    pdf_url = upload_result.get("secure_url")
+                    pdf_url = upload_result.get(
+                        "secure_url"
+                    )
 
                     print("\n========================")
                     print("CLOUDINARY PDF UPLOAD")
                     print("========================")
 
-                    print("PDF URL:", pdf_url)
+                    print(
+                        "PDF URL:",
+                        pdf_url
+                    )
 
                 except Exception as e:
 
@@ -1207,7 +1433,9 @@ If a value cannot be found, return an empty string.
                     print("CLOUDINARY UPLOAD ERROR")
                     print("========================")
 
-                    print(str(e))
+                    print(
+                        str(e)
+                    )
 
         except Exception as e:
 
@@ -1215,20 +1443,16 @@ If a value cannot be found, return an empty string.
             print("PDF GENERATION ERROR")
             print("========================")
 
-            print(str(e))
+            print(
+                str(e)
+            )
 
-            pdf_path = None
-
-        # ==========================================
+        # ====================================================
         # UPDATE GHL CONTACT
-        # ==========================================
+        # ====================================================
 
         ghl_api_key = os.environ.get(
             "GHL_API_KEY"
-        )
-
-        ghl_location_id = os.environ.get(
-            "GHL_LOCATION_ID"
         )
 
         if contact_id and ghl_api_key:
@@ -1250,261 +1474,352 @@ If a value cannot be found, return an empty string.
                     "application/json"
             }
 
+            custom_fields = [
+
+                # --------------------------------------------
+                # Utility provider
+                # --------------------------------------------
+
+                {
+                    "id": "QlceeYQHWz79JpC3RfHG",
+                    "fieldValue":
+                        extracted_data.get(
+                            "utility_provider",
+                            ""
+                        )
+                },
+
+                # --------------------------------------------
+                # Annual kWh
+                # --------------------------------------------
+
+                {
+                    "id": "nxlJKpBjr5vFXpsDt86M",
+                    "fieldValue":
+                        str(
+                            round(
+                                annual_kwh,
+                                2
+                            )
+                        )
+                        if annual_kwh is not None
+                        else ""
+                },
+
+                # --------------------------------------------
+                # Billing period
+                # --------------------------------------------
+
+                {
+                    "id": "bJexeasg4bhJN9vZuC6C",
+                    "fieldValue":
+                        extracted_data.get(
+                            "billing_period",
+                            ""
+                        )
+                },
+
+                # --------------------------------------------
+                # Peak demand
+                # --------------------------------------------
+
+                {
+                    "id": "ESOf9cNFnZXFkgTvAL4o",
+                    "fieldValue":
+                        str(
+                            round(
+                                peak_demand_kw,
+                                2
+                            )
+                        )
+                        if peak_demand_kw is not None
+                        else ""
+                },
+
+                # --------------------------------------------
+                # Property address
+                # --------------------------------------------
+
+                {
+                    "id": "EoeFaBKcFly95M8DGYzH",
+                    "fieldValue":
+                        property_address
+                },
+
+                # --------------------------------------------
+                # System size
+                # --------------------------------------------
+
+                {
+                    "id": "303wqmJNOMRe7fhZ1OTA",
+                    "fieldValue":
+                        str(
+                            round(
+                                preliminary_system_size_kw,
+                                2
+                            )
+                        )
+                        if preliminary_system_size_kw
+                        is not None
+                        else ""
+                },
+
+                # --------------------------------------------
+                # Annual solar production
+                # --------------------------------------------
+
+                {
+                    "id": "hsDEvEqotfjoHL1bRoS5",
+                    "fieldValue":
+                        str(
+                            round(
+                                estimated_annual_solar_kwh,
+                                2
+                            )
+                        )
+                        if estimated_annual_solar_kwh
+                        is not None
+                        else ""
+                },
+
+                # --------------------------------------------
+                # Production per kW
+                # --------------------------------------------
+
+                {
+                    "id": "LuMoa9805spakF6q1qi6",
+                    "fieldValue":
+                        str(
+                            round(
+                                annual_production_per_kw,
+                                2
+                            )
+                        )
+                        if annual_production_per_kw
+                        is not None
+                        else ""
+                },
+
+                # --------------------------------------------
+                # Electricity rate
+                # --------------------------------------------
+
+                {
+                    "id": "L7WjNOBcBux2B1mkRBlR",
+                    "fieldValue":
+                        str(
+                            electricity_rate
+                        )
+                        if electricity_rate
+                        is not None
+                        else ""
+                },
+
+                # --------------------------------------------
+                # Tax credit rate
+                # --------------------------------------------
+
+                {
+                    "id": "BG2CefNGA9Dz9myuqymJ",
+                    "fieldValue":
+                        str(
+                            round(
+                                preliminary_tax_credit_rate * 100,
+                                2
+                            )
+                        )
+                        if preliminary_tax_credit_rate
+                        is not None
+                        else ""
+                },
+
+                # --------------------------------------------
+                # Estimated tax credit
+                # --------------------------------------------
+
+                {
+                    "id": "0e349aKLH3y8jfZ0WlpJ",
+                    "fieldValue":
+                        str(
+                            round(
+                                estimated_tax_credit,
+                                2
+                            )
+                        )
+                        if estimated_tax_credit
+                        is not None
+                        else ""
+                },
+
+                # --------------------------------------------
+                # Net project cost
+                # --------------------------------------------
+
+                {
+                    "id": "Ymvq1fyoArmNlBZZoqmn",
+                    "fieldValue":
+                        str(
+                            round(
+                                estimated_net_project_cost,
+                                2
+                            )
+                        )
+                        if estimated_net_project_cost
+                        is not None
+                        else ""
+                },
+
+                # --------------------------------------------
+                # Incentive-adjusted payback
+                # --------------------------------------------
+
+                {
+                    "id": "4hL7mojN2jd5dwgi6Qqy",
+                    "fieldValue":
+                        str(
+                            round(
+                                incentive_adjusted_payback_years,
+                                2
+                            )
+                        )
+                        if incentive_adjusted_payback_years
+                        is not None
+                        else ""
+                },
+
+                # --------------------------------------------
+                # Estimated depreciation benefit
+                # --------------------------------------------
+
+                {
+                    "id": "5TJQOIFicqCs2aIipsFm",
+                    "fieldValue":
+                        str(
+                            round(
+                                estimated_depreciation_benefit,
+                                2
+                            )
+                        )
+                        if estimated_depreciation_benefit
+                        is not None
+                        else ""
+                },
+
+                # --------------------------------------------
+                # Depreciation tax savings
+                # --------------------------------------------
+
+                {
+                    "id": "4Twip5swlOpbwTh4Fcfv",
+                    "fieldValue":
+                        str(
+                            round(
+                                estimated_depreciation_tax_savings,
+                                2
+                            )
+                        )
+                        if estimated_depreciation_tax_savings
+                        is not None
+                        else ""
+                },
+
+                # --------------------------------------------
+                # Year 1 net economic benefit
+                # --------------------------------------------
+
+                {
+                    "id": "XGCAReyZJfuI8eLlhFeU",
+                    "fieldValue":
+                        str(
+                            round(
+                                estimated_year_1_net_economic_benefit,
+                                2
+                            )
+                        )
+                        if estimated_year_1_net_economic_benefit
+                        is not None
+                        else ""
+                },
+
+                # --------------------------------------------
+                # Second incentive payback field
+                # --------------------------------------------
+
+                {
+                    "id": "NABZeM3IEbGMpVWzkXsd",
+                    "fieldValue":
+                        str(
+                            round(
+                                incentive_adjusted_payback_years,
+                                2
+                            )
+                        )
+                        if incentive_adjusted_payback_years
+                        is not None
+                        else ""
+                },
+
+                # --------------------------------------------
+                # Underwriting review flag
+                # --------------------------------------------
+
+                {
+                    "id": "2RosGiBTpC9nr9twHtTu",
+                    "fieldValue":
+                        underwriting_review_flag
+                },
+
+                # --------------------------------------------
+                # AI Underwriting Summary
+                # --------------------------------------------
+
+                {
+                    "id": "CecrcV1MWS03t6HpkCVu",
+                    "fieldValue": (
+                        "PRELIMINARY COMMERCIAL SOLAR UNDERWRITING\n"
+                        f"System Size: "
+                        f"{round(preliminary_system_size_kw, 2) if preliminary_system_size_kw is not None else 'N/A'} kW\n"
+                        f"Annual Usage: "
+                        f"{round(annual_kwh, 2) if annual_kwh is not None else 'N/A'} kWh\n"
+                        f"Project Cost: "
+                        f"${round(estimated_project_cost, 2) if estimated_project_cost is not None else 'N/A'}\n"
+                        f"Year 1 Savings: "
+                        f"${round(estimated_year_1_savings, 2) if estimated_year_1_savings is not None else 'N/A'}\n"
+                        f"Simple Payback: "
+                        f"{round(simple_payback_years, 2) if simple_payback_years is not None else 'N/A'} years\n"
+                        f"Incentive-Adjusted Payback: "
+                        f"{round(incentive_adjusted_payback_years, 2) if incentive_adjusted_payback_years is not None else 'N/A'} years\n"
+                        f"Tax Credit: "
+                        f"${round(estimated_tax_credit, 2) if estimated_tax_credit is not None else 'N/A'}\n"
+                        f"Net Project Cost: "
+                        f"${round(estimated_net_project_cost, 2) if estimated_net_project_cost is not None else 'N/A'}\n"
+                        f"Depreciation Tax Savings: "
+                        f"${round(estimated_depreciation_tax_savings, 2) if estimated_depreciation_tax_savings is not None else 'N/A'}\n"
+                        f"Year 1 Net Economic Benefit: "
+                        f"${round(estimated_year_1_net_economic_benefit, 2) if estimated_year_1_net_economic_benefit is not None else 'N/A'}\n"
+                        f"Review Status: "
+                        f"{underwriting_review_flag}\n"
+                        "IMPORTANT: Preliminary underwriting only. "
+                        "Engineering and tax review required before final "
+                        "investment or project decisions."
+                    )
+                },
+
+                # --------------------------------------------
+                # AI Underwriting Report URL
+                # --------------------------------------------
+
+                {
+                    "id": "2GuvXtwQspvVj15flrod",
+                    "fieldValue":
+                        pdf_url
+                        if pdf_url
+                        else ""
+                }
+            ]
+
             ghl_payload = {
-
-                "customFields": [
-
-                    # Utility provider
-                    {
-                        "id": "QlceeYQHWz79JpC3RfHG",
-                        "fieldValue":
-                            extracted_data.get(
-                                "utility_provider",
-                                ""
-                            )
-                    },
-
-                    # Annual kWh
-                    {
-                        "id": "nxlJKpBjr5vFXpsDt86M",
-                        "fieldValue":
-                            extracted_data.get(
-                                "annual_kwh_usage",
-                                ""
-                            )
-                    },
-
-                    # Billing period
-                    {
-                        "id": "bJexeasg4bhJN9vZuC6C",
-                        "fieldValue":
-                            extracted_data.get(
-                                "billing_period",
-                                ""
-                            )
-                    },
-
-                    # Peak demand
-                    {
-                        "id": "ESOf9cNFnZXFkgTvAL4o",
-                        "fieldValue":
-                            extracted_data.get(
-                                "peak_demand_kw",
-                                ""
-                            )
-                    },
-
-                    # Property address
-                    {
-                        "id": "EoeFaBKcFly95M8DGYzH",
-                        "fieldValue":
-                            extracted_data.get(
-                                "property_address",
-                                ""
-                            )
-                    },
-
-                    # System size
-                    {
-                        "id": "303wqmJNOMRe7fhZ1OTA",
-                        "fieldValue":
-                            str(
-                                round(
-                                    preliminary_system_size_kw,
-                                    2
-                                )
-                            )
-                            if preliminary_system_size_kw
-                            is not None
-                            else ""
-                    },
-
-                    # Annual solar production
-                    {
-                        "id": "hsDEvEqotfjoHL1bRoS5",
-                        "fieldValue":
-                            str(
-                                round(
-                                    estimated_annual_solar_kwh,
-                                    2
-                                )
-                            )
-                            if estimated_annual_solar_kwh
-                            is not None
-                            else ""
-                    },
-
-                    # Production per kW
-                    {
-                        "id": "LuMoa9805spakF6q1qi6",
-                        "fieldValue":
-                            str(
-                                round(
-                                    annual_production_per_kw,
-                                    2
-                                )
-                            )
-                            if annual_production_per_kw
-                            is not None
-                            else ""
-                    },
-
-                    # Electricity rate
-                    {
-                        "id": "L7WjNOBcBux2B1mkRBlR",
-                        "fieldValue":
-                            extracted_data.get(
-                                "electric_rate_per_kwh",
-                                ""
-                            )
-                    },
-
-                    # Tax credit rate
-                    {
-                        "id": "BG2CefNGA9Dz9myuqymJ",
-                        "fieldValue":
-                            str(
-                                round(
-                                    preliminary_tax_credit_rate * 100,
-                                    2
-                                )
-                            )
-                            if preliminary_tax_credit_rate
-                            is not None
-                            else ""
-                    },
-
-                    # Estimated tax credit
-                    {
-                        "id": "0e349aKLH3y8jfZ0WlpJ",
-                        "fieldValue":
-                            str(
-                                round(
-                                    estimated_tax_credit,
-                                    2
-                                )
-                            )
-                            if estimated_tax_credit
-                            is not None
-                            else ""
-                    },
-
-                    # Net project cost
-                    {
-                        "id": "Ymvq1fyoArmNlBZZoqmn",
-                        "fieldValue":
-                            str(
-                                round(
-                                    estimated_net_project_cost,
-                                    2
-                                )
-                            )
-                            if estimated_net_project_cost
-                            is not None
-                            else ""
-                    },
-
-                    # Incentive-adjusted payback
-{
-    "id": "4hL7mojN2jd5dwgi6Qqy",
-    "fieldValue": str(
-        round(
-            incentive_adjusted_payback_years,
-            2
-        )
-    )
-    if incentive_adjusted_payback_years is not None
-    else ""
-},
-
-                    # Estimated depreciation benefit
-                    {
-                        "id": "5TJQOIFicqCs2aIipsFm",
-                        "fieldValue":
-                            str(
-                                round(
-                                    estimated_depreciation_benefit,
-                                    2
-                                )
-                            )
-                            if estimated_depreciation_benefit
-                            is not None
-                            else ""
-                    },
-
-                    # Depreciation tax savings
-                    {
-                        "id": "4Twip5swlOpbwTh4Fcfv",
-                        "fieldValue":
-                            str(
-                                round(
-                                    estimated_depreciation_tax_savings,
-                                    2
-                                )
-                            )
-                            if estimated_depreciation_tax_savings
-                            is not None
-                            else ""
-                    },
-
-                    # Year 1 net economic benefit
-                    {
-                        "id": "XGCAReyZJfuI8eLlhFeU",
-                        "fieldValue":
-                            str(
-                                round(
-                                    estimated_year_1_net_economic_benefit,
-                                    2
-                                )
-                            )
-                            if estimated_year_1_net_economic_benefit
-                            is not None
-                            else ""
-                    },
-
-                    # Incentive-adjusted payback
-                    {
-                        "id": "NABZeM3IEbGMpVWzkXsd",
-                        "fieldValue":
-                            str(
-                                round(
-                                    incentive_adjusted_payback_years,
-                                    2
-                                )
-                            )
-                            if incentive_adjusted_payback_years
-                            is not None
-                            else ""
-                    },
-                     # Underwriting review flag
-                    {
-                        "id": "2RosGiBTpC9nr9twHtTu",
-                        "fieldValue": underwriting_review_flag
-                    },
-                    # AI Underwriting Summary
-{
-    "id": "CecrcV1MWS03t6HpkCVu",
-    "fieldValue": (
-        "PRELIMINARY COMMERCIAL SOLAR UNDERWRITING\n"
-        f"System Size: {round(preliminary_system_size_kw, 2) if preliminary_system_size_kw is not None else 'N/A'} kW\n"
-        f"Project Cost: ${round(estimated_project_cost, 2) if estimated_project_cost is not None else 'N/A'}\n"
-        f"Year 1 Savings: ${round(estimated_year_1_savings, 2) if estimated_year_1_savings is not None else 'N/A'}\n"
-        f"Simple Payback: {round(simple_payback_years, 2) if simple_payback_years is not None else 'N/A'} years\n"
-        f"Incentive-Adjusted Payback: {round(incentive_adjusted_payback_years, 2) if incentive_adjusted_payback_years is not None else 'N/A'} years\n"
-        f"Tax Credit: ${round(estimated_tax_credit, 2) if estimated_tax_credit is not None else 'N/A'}\n"
-        f"Net Project Cost: ${round(estimated_net_project_cost, 2) if estimated_net_project_cost is not None else 'N/A'}\n"
-        f"Depreciation Tax Savings: ${round(estimated_depreciation_tax_savings, 2) if estimated_depreciation_tax_savings is not None else 'N/A'}\n"
-        f"Year 1 Net Economic Benefit: ${round(estimated_year_1_net_economic_benefit, 2) if estimated_year_1_net_economic_benefit is not None else 'N/A'}\n"
-        f"Review Status: {underwriting_review_flag}\n"
-        "IMPORTANT: Preliminary underwriting only. Engineering and tax review required before final investment or project decisions."
-    )
-},
-# AI Underwriting Report URL
-{
-    "id": "2GuvXtwQspvVj15flrod",
-    "fieldValue": pdf_url if pdf_url else ""
-},
-                ]
+                "customFields": custom_fields
             }
 
             ghl_response = requests.put(
@@ -1538,9 +1853,9 @@ If a value cannot be found, return an empty string.
                 "Missing Contact ID or GHL API key"
             )
 
-        # ==========================================
+        # ====================================================
         # FINAL RESPONSE
-        # ==========================================
+        # ====================================================
 
         return jsonify({
 
@@ -1551,6 +1866,36 @@ If a value cannot be found, return an empty string.
 
             "extracted_data":
                 extracted_data,
+
+            "usage_calculation": {
+
+                "annual_kwh":
+                    annual_kwh,
+
+                "current_period_kwh":
+                    current_period_kwh,
+
+                "source":
+                    usage_source
+            },
+
+            "solar": {
+
+                "latitude":
+                    latitude,
+
+                "longitude":
+                    longitude,
+
+                "pvwatts_annual_production_per_kw":
+                    annual_production_per_kw,
+
+                "system_size_kw":
+                    preliminary_system_size_kw,
+
+                "annual_solar_kwh":
+                    estimated_annual_solar_kwh
+            },
 
             "financial_underwriting": {
 
@@ -1580,22 +1925,38 @@ If a value cannot be found, return an empty string.
 
                 "incentive_adjusted_payback":
                     incentive_adjusted_payback_years
-            }
+            },
+
+            "review_status":
+                underwriting_review_flag,
+
+            "pdf_url":
+                pdf_url
         })
 
     except Exception as e:
 
         print("\n========================")
-        print("ERROR")
+        print("FATAL WEBHOOK ERROR")
         print("========================")
 
-        print(str(e))
+        print(
+            str(e)
+        )
 
         return jsonify({
+
             "status": "error",
-            "message": str(e)
+
+            "message":
+                str(e)
+
         }), 500
 
+
+# ============================================================
+# LOCAL SERVER
+# ============================================================
 
 if __name__ == "__main__":
 
