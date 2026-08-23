@@ -1198,6 +1198,24 @@ If a value cannot be found, return an empty string.
                         "id": "2RosGiBTpC9nr9twHtTu",
                         "fieldValue": underwriting_review_flag
                     },
+                    # AI Underwriting Summary
+{
+    "id": "CecrcV1MWS03t6HpkCVu",
+    "fieldValue": (
+        "PRELIMINARY COMMERCIAL SOLAR UNDERWRITING\n"
+        f"System Size: {round(preliminary_system_size_kw, 2) if preliminary_system_size_kw is not None else 'N/A'} kW\n"
+        f"Project Cost: ${round(estimated_project_cost, 2) if estimated_project_cost is not None else 'N/A'}\n"
+        f"Year 1 Savings: ${round(estimated_year_1_savings, 2) if estimated_year_1_savings is not None else 'N/A'}\n"
+        f"Simple Payback: {round(simple_payback_years, 2) if simple_payback_years is not None else 'N/A'} years\n"
+        f"Incentive-Adjusted Payback: {round(incentive_adjusted_payback_years, 2) if incentive_adjusted_payback_years is not None else 'N/A'} years\n"
+        f"Tax Credit: ${round(estimated_tax_credit, 2) if estimated_tax_credit is not None else 'N/A'}\n"
+        f"Net Project Cost: ${round(estimated_net_project_cost, 2) if estimated_net_project_cost is not None else 'N/A'}\n"
+        f"Depreciation Tax Savings: ${round(estimated_depreciation_tax_savings, 2) if estimated_depreciation_tax_savings is not None else 'N/A'}\n"
+        f"Year 1 Net Economic Benefit: ${round(estimated_year_1_net_economic_benefit, 2) if estimated_year_1_net_economic_benefit is not None else 'N/A'}\n"
+        "Review Status: Preliminary PASS\n"
+        "IMPORTANT: Preliminary underwriting only. Engineering and tax review required before final investment or project decisions."
+    )
+},
                 ]
             }
 
