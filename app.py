@@ -1499,6 +1499,11 @@ If a value cannot be found, return an empty string.
         "IMPORTANT: Preliminary underwriting only. Engineering and tax review required before final investment or project decisions."
     )
 },
+# AI Underwriting Report URL
+{
+    "id": "2GuvXtwQspvVj15flrod",
+    "fieldValue": pdf_url if pdf_url else ""
+},
                 ]
             }
 
