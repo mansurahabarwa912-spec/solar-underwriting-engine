@@ -1070,6 +1070,19 @@ If a value cannot be found, return an empty string.
                             else ""
                     },
 
+                    # Incentive-adjusted payback
+{
+    "id": "4hL7mojN2jd5dwgi6Qqy",
+    "fieldValue": str(
+        round(
+            incentive_adjusted_payback_years,
+            2
+        )
+    )
+    if incentive_adjusted_payback_years is not None
+    else ""
+},
+
                     # Estimated depreciation benefit
                     {
                         "id": "5TJQOIFicqCs2aIipsFm",
