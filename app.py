@@ -1049,7 +1049,7 @@ def webhook():
 
             # CORRECT NREL PVWATTS V8 ENDPOINT
             pvwatts_url = (
-                "https://developer.nrl.gov/"
+                "https://developer.nlr.gov/"
                 "api/pvwatts/v8.json"
             )
 
