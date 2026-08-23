@@ -513,79 +513,9 @@ def webhook():
             uploaded_file.id
         )
 
-        # ====================================================
+        # ==========================================
         # AI UTILITY BILL EXTRACTION
-        # ====================================================
-
-        extraction_prompt = """
-
-Read this commercial utility bill carefully.
-
-Extract the following information.
-
-1. Utility provider name
-2. Annual electricity usage in kWh
-3. Current billing-period electricity usage in kWh
-4. Peak demand in kW
-5. Billing period
-6. Service/property address
-7. Electricity energy rate in $/kWh
-
-IMPORTANT:
-
-If the bill contains a usage history, monthly history,
-12-month usage table, annual usage, or previous-month
-usage information, use that information to determine
-annual electricity usage whenever possible.
-
-If a reliable annual usage figure is NOT present,
-return the current billing-period kWh separately.
-
-Do NOT invent annual usage.
-
-For electricity rate:
-
-Use an explicit energy/supply $/kWh rate when available.
-
-If there is no explicit $/kWh rate, calculate it ONLY when
-possible using energy/supply charges divided by electricity
-kWh usage.
-
-Do NOT use:
-
-- demand charges
-- taxes
-- fixed customer charges
-- late fees
-- unrelated delivery charges
-
-For peak demand:
-
-Look specifically for:
-
-- peak demand
-- maximum demand
-- demand kW
-- peak kW
-- maximum kW
-
-If it is not present, return an empty string.
-
-Return ONLY valid JSON in exactly this format:
-
-{
-    "utility_provider": "",
-    "annual_kwh_usage": "",
-    "current_period_kwh": "",
-    "peak_demand_kw": "",
-    "billing_period": "",
-    "property_address": "",
-    "electric_rate_per_kwh": ""
-}
-
-If a value cannot be found, return an empty string.
-
-"""
+        # ==========================================
 
         result = client.responses.create(
 
@@ -605,7 +535,171 @@ If a value cannot be found, return an empty string.
 
                         {
                             "type": "input_text",
-                            "text": extraction_prompt
+
+                            "text": """
+        You are extracting commercial electricity bill data
+        for preliminary solar underwriting.
+
+        Read the ENTIRE utility bill carefully.
+
+        Do not assume that the information is located on
+        the first page. Check tables, usage history,
+        charges, demand sections, meter information,
+        and rate information.
+
+        Extract the following:
+
+        1. Utility provider
+        2. Electricity usage in kWh
+        3. Peak/billed demand in kW
+        4. Billing period
+        5. Service/property address
+        6. Electricity energy rate in $/kWh
+
+        IMPORTANT — ELECTRICITY USAGE:
+
+        Look for electricity consumption under labels such as:
+
+        - kWh
+        - Usage
+        - Electricity Usage
+        - Energy Usage
+        - Total Usage
+        - Energy Consumption
+        - Meter Usage
+        - Monthly Usage
+        - Historical Usage
+        - Usage History
+
+        If the bill contains a 12-month usage history,
+        calculate the annual electricity usage by adding
+        the available monthly kWh values.
+
+        If the bill contains only one billing period's
+        electricity usage, extract that monthly usage into
+        monthly_kwh_usage.
+
+        Then estimate annual_kwh_usage as:
+
+        monthly_kwh_usage × 12
+
+        ONLY when there is exactly one reliable monthly
+        usage value and no 12-month history.
+
+        This is an ESTIMATED annual usage.
+
+        Do NOT return an empty annual_kwh_usage when a
+        reliable monthly kWh value is available.
+
+        IMPORTANT — DEMAND:
+
+        Look for demand under labels such as:
+
+        - Demand
+        - Peak Demand
+        - Maximum Demand
+        - Billed Demand
+        - Peak kW
+        - Demand kW
+        - kW Demand
+        - Maximum kW
+        - Recorded Demand
+        - Metered Demand
+
+        Extract the value in kW.
+
+        If the bill contains multiple demand values,
+        prefer the billed/maximum demand for the relevant
+        billing period.
+
+        If demand genuinely does not appear anywhere on
+        the bill, return an empty string.
+
+        DO NOT invent or estimate demand.
+
+        IMPORTANT — ELECTRICITY RATE:
+
+        Find the actual electricity energy/supply rate
+        charged for electricity consumption.
+
+        Prefer an explicit $/kWh rate.
+
+        If there is no explicit rate, calculate it ONLY if
+        the bill provides enough information:
+
+        energy/supply charges ÷ electricity kWh usage.
+
+        Do NOT include:
+
+        - demand charges
+        - taxes
+        - fixed customer charges
+        - late fees
+        - unrelated delivery charges
+
+        If a reliable electricity rate cannot be determined,
+        return an empty string.
+
+        IMPORTANT — ADDRESS:
+
+        Extract the actual service/property address shown
+        on the bill.
+
+        IMPORTANT — BILLING PERIOD:
+
+        Return the start and end dates if available.
+
+        IMPORTANT:
+
+        Never invent a value.
+
+        Return ONLY valid JSON.
+
+        Use exactly this structure:
+
+        {
+            "utility_provider": "",
+            "monthly_kwh_usage": "",
+            "annual_kwh_usage": "",
+            "annual_kwh_source": "",
+            "peak_demand_kw": "",
+            "billing_period": "",
+            "property_address": "",
+            "electric_rate_per_kwh": ""
+        }
+
+        For annual_kwh_source use one of:
+
+        "12-month-history"
+
+        "monthly_usage_x12"
+
+        ""
+
+        Examples:
+
+        If the bill contains 12 months:
+
+        {
+            "monthly_kwh_usage": "",
+            "annual_kwh_usage": "145000",
+            "annual_kwh_source": "12-month-history"
+        }
+
+        If the bill contains one month with 12000 kWh:
+
+        {
+            "monthly_kwh_usage": "12000",
+            "annual_kwh_usage": "144000",
+            "annual_kwh_source": "monthly_usage_x12"
+        }
+
+        If demand is not present:
+
+        "peak_demand_kw": ""
+
+        Never use zero to mean missing data.
+        """
                         }
 
                     ]
@@ -618,17 +712,50 @@ If a value cannot be found, return an empty string.
         print("AI EXTRACTION")
         print("========================")
 
-        print(
-            result.output_text
-        )
+        print(result.output_text)
 
-        # ====================================================
-        # PARSE AI RESPONSE
-        # ====================================================
+        contact_id = custom_data.get("contact_id")
 
-        extracted_data = parse_ai_json(
-            result.output_text
-        )
+        print("\n========================")
+        print("CONTACT ID")
+        print("========================")
+
+        print(contact_id)
+
+        # ==========================================
+        # CONVERT AI RESPONSE TO JSON
+        # ==========================================
+
+        try:
+
+            ai_text = result.output_text.strip()
+
+            if ai_text.startswith("```"):
+
+                ai_text = ai_text.replace(
+                    "```json",
+                    ""
+                )
+
+                ai_text = ai_text.replace(
+                    "```",
+                    ""
+                )
+
+                ai_text = ai_text.strip()
+
+            extracted_data = json.loads(ai_text)
+
+        except Exception as e:
+
+            print("\n========================")
+            print("JSON EXTRACTION ERROR")
+            print("========================")
+
+            print("Error:", str(e))
+            print("Raw AI response:", result.output_text)
+
+            extracted_data = {}
 
         print("\n========================")
         print("EXTRACTED DATA")
@@ -639,6 +766,128 @@ If a value cannot be found, return an empty string.
                 extracted_data,
                 indent=4
             )
+        )
+
+        # ==========================================
+        # NORMALIZE ANNUAL KWH
+        # ==========================================
+
+        annual_kwh_raw = extracted_data.get(
+            "annual_kwh_usage",
+            ""
+        )
+
+        monthly_kwh_raw = extracted_data.get(
+            "monthly_kwh_usage",
+            ""
+        )
+
+        annual_kwh = None
+
+        # First preference: AI calculated annual usage
+        try:
+
+            if str(annual_kwh_raw).strip():
+
+                annual_kwh = float(
+                    str(annual_kwh_raw)
+                    .replace(",", "")
+                    .replace("kWh", "")
+                    .strip()
+                )
+
+        except (ValueError, TypeError):
+
+            annual_kwh = None
+
+
+        # Second preference: monthly usage × 12
+        if (
+            annual_kwh is None
+            and str(monthly_kwh_raw).strip()
+        ):
+
+            try:
+
+                monthly_kwh = float(
+                    str(monthly_kwh_raw)
+                    .replace(",", "")
+                    .replace("kWh", "")
+                    .strip()
+                )
+
+                if monthly_kwh > 0:
+
+                    annual_kwh = monthly_kwh * 12
+
+                    extracted_data[
+                        "annual_kwh_usage"
+                    ] = str(round(annual_kwh, 2))
+
+                    extracted_data[
+                        "annual_kwh_source"
+                    ] = "monthly_usage_x12"
+
+            except (ValueError, TypeError):
+
+                annual_kwh = None
+
+        print("\n========================")
+        print("NORMALIZED ELECTRICITY USAGE")
+        print("========================")
+
+        print(
+            "Monthly kWh:",
+            monthly_kwh_raw
+        )
+
+        print(
+            "Annual kWh:",
+            annual_kwh
+        )
+
+        print(
+            "Annual kWh source:",
+            extracted_data.get(
+                "annual_kwh_source",
+                ""
+            )
+        )
+
+        # ==========================================
+        # NORMALIZE PEAK DEMAND
+        # ==========================================
+
+        peak_demand_raw = extracted_data.get(
+            "peak_demand_kw",
+            ""
+        )
+
+        peak_demand_kw = None
+
+        try:
+
+            if str(peak_demand_raw).strip():
+
+                peak_demand_kw = float(
+                    str(peak_demand_raw)
+                    .replace(",", "")
+                    .replace("kW", "")
+                    .strip()
+                )
+
+        except (ValueError, TypeError):
+
+            peak_demand_kw = None
+
+        print("\n========================")
+        print("NORMALIZED DEMAND")
+        print("========================")
+
+        print(
+            "Peak demand:",
+            peak_demand_kw,
+            "kW"
         )
 
         # ====================================================
@@ -1932,8 +2181,7 @@ If a value cannot be found, return an empty string.
 
             "pdf_url":
                 pdf_url
-        })
-
+        }) 
     except Exception as e:
 
         print("\n========================")
