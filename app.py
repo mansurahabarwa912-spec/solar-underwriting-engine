@@ -722,7 +722,7 @@ def webhook():
 
         print(contact_id)
 
-        # ==========================================
+       # ==========================================
         # CONVERT AI RESPONSE TO JSON
         # ==========================================
 
@@ -730,21 +730,40 @@ def webhook():
 
             ai_text = result.output_text.strip()
 
-            if ai_text.startswith("```"):
+            # Remove markdown code fence
+            if "```json" in ai_text:
 
-                ai_text = ai_text.replace(
-                    "```json",
-                    ""
+                ai_text = ai_text.split("```json", 1)[1]
+
+            elif "```" in ai_text:
+
+                ai_text = ai_text.split("```", 1)[1]
+
+            # Remove anything after the closing JSON fence
+            if "```" in ai_text:
+
+                ai_text = ai_text.split("```", 1)[0]
+
+            ai_text = ai_text.strip()
+
+            # ------------------------------------------
+            # SAFETY: extract ONLY the JSON object
+            # ------------------------------------------
+
+            json_start = ai_text.find("{")
+            json_end = ai_text.rfind("}")
+
+            if json_start == -1 or json_end == -1:
+
+                raise ValueError(
+                    "No JSON object found in AI response"
                 )
 
-                ai_text = ai_text.replace(
-                    "```",
-                    ""
-                )
+            json_text = ai_text[
+                json_start:json_end + 1
+            ]
 
-                ai_text = ai_text.strip()
-
-            extracted_data = json.loads(ai_text)
+            extracted_data = json.loads(json_text)
 
         except Exception as e:
 
@@ -753,7 +772,11 @@ def webhook():
             print("========================")
 
             print("Error:", str(e))
-            print("Raw AI response:", result.output_text)
+
+            print(
+                "Raw AI response:",
+                result.output_text
+            )
 
             extracted_data = {}
 
