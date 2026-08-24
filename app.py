@@ -1221,7 +1221,7 @@ Never invent or estimate demand.
 
         current_period_kwh = clean_number(
             extracted_data.get(
-                "current_period_kwh"
+                "monthly_kwh_usage"
             )
         )
 
