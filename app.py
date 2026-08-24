@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from openai import OpenAI
 import os
 import json
+from datetime import datetime
 import requests
 import tempfile
 import re
@@ -2295,6 +2296,40 @@ Never invent or estimate demand.
                 },
 
                 # --------------------------------------------
+# AI Simple Payback Period
+# --------------------------------------------
+
+{
+    "id": "AeEgvEUeMmZuSL9n6eC9",
+    "fieldValue":
+        str(
+            round(
+                simple_payback_years,
+                2
+            )
+        )
+        if simple_payback_years is not None
+        else ""
+},
+
+# --------------------------------------------
+# AI Estimated Project Cost
+# --------------------------------------------
+
+{
+    "id": "EOVpbGis50W09r81T2Qx",
+    "fieldValue":
+        str(
+            round(
+                estimated_project_cost,
+                2
+            )
+        )
+        if estimated_project_cost is not None
+        else ""
+},
+
+                # --------------------------------------------
                 # Incentive-adjusted payback
                 # --------------------------------------------
 
@@ -2429,6 +2464,81 @@ Never invent or estimate demand.
                         "investment or project decisions."
                     )
                 },
+
+                # --------------------------------------------
+# AI Year 1 Savings
+# --------------------------------------------
+
+{
+    "id": "X03ssAuZyYxUEH4tqgVh",
+    "fieldValue":
+        str(
+            round(
+                estimated_year_1_savings,
+                2
+            )
+        )
+        if estimated_year_1_savings is not None
+        else ""
+},
+
+# --------------------------------------------
+# AI Project Status
+# --------------------------------------------
+
+{
+    "id": "MUtdaLNzU9Tfo4QCA7My",
+    "fieldValue":
+        underwriting_review_flag
+        if underwriting_review_flag
+        else ""
+},
+
+# --------------------------------------------
+# AI Underwriting Date
+# --------------------------------------------
+
+{
+    "id": "53IwRtm9lEMsB4FZM7A1",
+    "fieldValue":
+        datetime.now().strftime("%Y-%m-%d")
+},
+
+# --------------------------------------------
+# Latitude
+# --------------------------------------------
+
+{
+    "id": "mRLoTd4hSRgb4Omp4KHa",
+    "fieldValue":
+        str(latitude)
+        if latitude is not None
+        else ""
+},
+
+# --------------------------------------------
+# Longitude
+# --------------------------------------------
+
+{
+    "id": "jAoRTkNL6Zyp3nQMVzQ3",
+    "fieldValue":
+        str(longitude)
+        if longitude is not None
+        else ""
+},
+
+# --------------------------------------------
+# AI Engineering Review
+# --------------------------------------------
+
+{
+    "id": "l1d7ngh9d2EdQ7AuZB9f",
+    "fieldValue":
+        underwriting_review_flag
+        if underwriting_review_flag
+        else ""
+},
 
                 # --------------------------------------------
                 # AI Underwriting Report URL
