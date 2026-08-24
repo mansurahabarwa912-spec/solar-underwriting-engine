@@ -9,7 +9,10 @@ import re
 import cloudinary
 import cloudinary.uploader
 
+from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
 from reportlab.platypus import (
     SimpleDocTemplate,
     Paragraph,
@@ -17,9 +20,6 @@ from reportlab.platypus import (
     Table,
     TableStyle
 )
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import inch
 
 
 # ============================================================
@@ -140,7 +140,7 @@ def get_bill_url(bill_data):
 
 
 # ============================================================
-# PDF GENERATOR
+# PROFESSIONAL PDF GENERATOR
 # ============================================================
 
 def create_underwriting_pdf(
@@ -162,47 +162,215 @@ def create_underwriting_pdf(
 
     styles = getSampleStyleSheet()
 
+    # ========================================================
+    # CUSTOM STYLES
+    # ========================================================
+
+    title_style = ParagraphStyle(
+        "ReportTitle",
+        parent=styles["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=20,
+        leading=24,
+        alignment=1,
+        spaceAfter=8
+    )
+
+    subtitle_style = ParagraphStyle(
+        "Subtitle",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=9,
+        leading=13,
+        alignment=1,
+        textColor=colors.grey
+    )
+
+    section_style = ParagraphStyle(
+        "Section",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=11,
+        leading=14,
+        spaceBefore=4,
+        spaceAfter=8
+    )
+
+    normal_style = ParagraphStyle(
+        "NormalReport",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=9,
+        leading=13
+    )
+
+    small_style = ParagraphStyle(
+        "SmallReport",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=7.5,
+        leading=10
+    )
+
+    metric_label_style = ParagraphStyle(
+        "MetricLabel",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=7.5,
+        leading=9,
+        alignment=1
+    )
+
+    metric_value_style = ParagraphStyle(
+        "MetricValue",
+        parent=styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=12,
+        leading=14,
+        alignment=1
+    )
+
+    # ========================================================
+    # DOCUMENT
+    # ========================================================
+
     document = SimpleDocTemplate(
         output_path,
         pagesize=letter,
         rightMargin=40,
         leftMargin=40,
         topMargin=40,
-        bottomMargin=40
+        bottomMargin=45
     )
 
     story = []
 
+    # ========================================================
+    # HEADER
+    # ========================================================
+
     story.append(
         Paragraph(
-            "PRELIMINARY COMMERCIAL SOLAR UNDERWRITING REPORT",
-            styles["Title"]
+            "PRELIMINARY COMMERCIAL<br/>"
+            "SOLAR UNDERWRITING REPORT",
+            title_style
         )
     )
 
-    story.append(Spacer(1, 12))
+    story.append(
+        Paragraph(
+            "Automated preliminary screening for commercial solar projects",
+            subtitle_style
+        )
+    )
+
+    story.append(Spacer(1, 8))
 
     story.append(
         Paragraph(
             "For preliminary screening only — subject to engineering, "
-            "utility, legal, and tax review.",
-            styles["Normal"]
+            "utility, legal, tax, and financial review.",
+            subtitle_style
         )
     )
 
-    story.append(Spacer(1, 20))
+    story.append(Spacer(1, 18))
+
+    # ========================================================
+    # EXECUTIVE SUMMARY
+    # ========================================================
 
     story.append(
         Paragraph(
-            "<b>PROPERTY & UTILITY</b>",
-            styles["Heading2"]
+            "EXECUTIVE SUMMARY",
+            section_style
+        )
+    )
+
+    summary_data = [
+        [
+            Paragraph("SYSTEM SIZE", metric_label_style),
+            Paragraph("ANNUAL SOLAR PRODUCTION", metric_label_style),
+            Paragraph("PROJECT COST", metric_label_style),
+            Paragraph("YEAR 1 SAVINGS", metric_label_style)
+        ],
+        [
+            Paragraph(
+                f"{system_size_kw:.2f} kW"
+                if system_size_kw is not None
+                else "N/A",
+                metric_value_style
+            ),
+            Paragraph(
+                f"{annual_solar_kwh:,.0f} kWh"
+                if annual_solar_kwh is not None
+                else "N/A",
+                metric_value_style
+            ),
+            Paragraph(
+                f"${project_cost:,.0f}"
+                if project_cost is not None
+                else "N/A",
+                metric_value_style
+            ),
+            Paragraph(
+                f"${year_1_savings:,.0f}"
+                if year_1_savings is not None
+                else "N/A",
+                metric_value_style
+            )
+        ]
+    ]
+
+    summary_table = Table(
+        summary_data,
+        colWidths=[
+            1.55 * inch,
+            1.75 * inch,
+            1.55 * inch,
+            1.55 * inch
+        ],
+        rowHeights=[22, 30]
+    )
+
+    summary_table.setStyle(
+        TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5)
+        ])
+    )
+
+    story.append(summary_table)
+
+    story.append(Spacer(1, 18))
+
+    # ========================================================
+    # PROPERTY & UTILITY
+    # ========================================================
+
+    story.append(
+        Paragraph(
+            "PROPERTY & UTILITY",
+            section_style
         )
     )
 
     property_data = [
-        ["Property Address", str(property_address or "N/A")],
-        ["Utility Provider", str(utility_provider or "N/A")],
-        ["Underwriting Review", str(review_flag or "N/A")]
+        [
+            "Property Address",
+            str(property_address or "N/A")
+        ],
+        [
+            "Utility Provider",
+            str(utility_provider or "N/A")
+        ],
+        [
+            "Underwriting Review",
+            str(review_flag or "N/A")
+        ]
     ]
 
     property_table = Table(
@@ -214,18 +382,28 @@ def create_underwriting_pdf(
         TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold")
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7)
         ])
     )
 
     story.append(property_table)
 
-    story.append(Spacer(1, 20))
+    story.append(Spacer(1, 18))
+
+    # ========================================================
+    # SOLAR SYSTEM
+    # ========================================================
 
     story.append(
         Paragraph(
-            "<b>SOLAR SYSTEM</b>",
-            styles["Heading2"]
+            "SOLAR SYSTEM",
+            section_style
         )
     )
 
@@ -252,18 +430,29 @@ def create_underwriting_pdf(
     solar_table.setStyle(
         TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold")
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+            ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7)
         ])
     )
 
     story.append(solar_table)
 
-    story.append(Spacer(1, 20))
+    story.append(Spacer(1, 18))
+
+    # ========================================================
+    # FINANCIAL UNDERWRITING
+    # ========================================================
 
     story.append(
         Paragraph(
-            "<b>FINANCIAL UNDERWRITING</b>",
-            styles["Heading2"]
+            "FINANCIAL UNDERWRITING",
+            section_style
         )
     )
 
@@ -327,18 +516,73 @@ def create_underwriting_pdf(
         TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
             ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-            ("VALIGN", (0, 0), (-1, -1), "TOP")
+            ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7)
         ])
     )
 
     story.append(financial_table)
 
-    story.append(Spacer(1, 25))
+    story.append(Spacer(1, 18))
+
+    # ========================================================
+    # REVIEW STATUS
+    # ========================================================
 
     story.append(
         Paragraph(
-            "<b>IMPORTANT NOTICE</b>",
-            styles["Heading2"]
+            "UNDERWRITING STATUS",
+            section_style
+        )
+    )
+
+    review_data = [
+        [
+            Paragraph(
+                str(review_flag or "N/A"),
+                ParagraphStyle(
+                    "ReviewStatus",
+                    parent=normal_style,
+                    fontName="Helvetica-Bold",
+                    fontSize=10,
+                    alignment=1
+                )
+            )
+        ]
+    ]
+
+    review_table = Table(
+        review_data,
+        colWidths=[6.5 * inch]
+    )
+
+    review_table.setStyle(
+        TableStyle([
+            ("BOX", (0, 0), (-1, -1), 1, colors.grey),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("TOPPADDING", (0, 0), (-1, -1), 9),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 9)
+        ])
+    )
+
+    story.append(review_table)
+
+    story.append(Spacer(1, 18))
+
+    # ========================================================
+    # IMPORTANT NOTICE
+    # ========================================================
+
+    story.append(
+        Paragraph(
+            "IMPORTANT NOTICE",
+            section_style
         )
     )
 
@@ -348,13 +592,37 @@ def create_underwriting_pdf(
             "It is not a final engineering design, tax opinion, utility "
             "interconnection study, investment recommendation, or guarantee "
             "of project economics. Final project decisions should be based "
-            "on qualified engineering, tax, legal, utility, and financial review.",
-            styles["Normal"]
+            "on qualified engineering, tax, legal, utility, and financial "
+            "review.",
+            normal_style
         )
     )
 
-    document.build(story)
+    story.append(Spacer(1, 15))
 
+    # ========================================================
+    # FOOTER
+    # ========================================================
+
+    story.append(
+        Paragraph(
+            "Automated Preliminary Commercial Solar Underwriting",
+            small_style
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "Confidential — For preliminary screening purposes only",
+            small_style
+        )
+    )
+
+    # ========================================================
+    # BUILD PDF
+    # ========================================================
+
+    document.build(story)
 
 # ============================================================
 # HOME
