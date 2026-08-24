@@ -537,169 +537,254 @@ def webhook():
                             "type": "input_text",
 
                             "text": """
-        You are extracting commercial electricity bill data
-        for preliminary solar underwriting.
+You are extracting commercial electricity bill data
+for preliminary solar underwriting.
 
-        Read the ENTIRE utility bill carefully.
+Read the ENTIRE utility bill carefully.
 
-        Do not assume that the information is located on
-        the first page. Check tables, usage history,
-        charges, demand sections, meter information,
-        and rate information.
+Check ALL pages, tables, usage history, meter information,
+charges, demand sections, rate information, and service
+information.
 
-        Extract the following:
+NEVER guess or invent information.
 
-        1. Utility provider
-        2. Electricity usage in kWh
-        3. Peak/billed demand in kW
-        4. Billing period
-        5. Service/property address
-        6. Electricity energy rate in $/kWh
+====================================================
+1. UTILITY PROVIDER
+====================================================
 
-        IMPORTANT — ELECTRICITY USAGE:
+Extract the utility/electric company name.
 
-        Look for electricity consumption under labels such as:
+Look for:
+- Utility Provider
+- Electric Company
+- Service Provider
+- Account Information
+- Company logo/name
 
-        - kWh
-        - Usage
-        - Electricity Usage
-        - Energy Usage
-        - Total Usage
-        - Energy Consumption
-        - Meter Usage
-        - Monthly Usage
-        - Historical Usage
-        - Usage History
+====================================================
+2. ELECTRICITY USAGE
+====================================================
 
-        If the bill contains a 12-month usage history,
-        calculate the annual electricity usage by adding
-        the available monthly kWh values.
+Extract electricity consumption in kWh.
 
-        If the bill contains only one billing period's
-        electricity usage, extract that monthly usage into
-        monthly_kwh_usage.
+Look for:
+- kWh
+- Usage
+- Electricity Usage
+- Energy Usage
+- Total Usage
+- Energy Consumption
+- Meter Usage
+- Monthly Usage
+- Historical Usage
+- Usage History
+- Imported kWh
+- Delivered kWh
+- Consumption
 
-        Then estimate annual_kwh_usage as:
+If the bill contains a 12-month usage history:
 
-        monthly_kwh_usage × 12
+Add the reliable monthly kWh values to calculate
+annual_kwh_usage.
 
-        ONLY when there is exactly one reliable monthly
-        usage value and no 12-month history.
+Set:
 
-        This is an ESTIMATED annual usage.
+"annual_kwh_source": "12-month-history"
 
-        Do NOT return an empty annual_kwh_usage when a
-        reliable monthly kWh value is available.
+If the bill contains only ONE reliable billing-period
+usage value:
 
-        IMPORTANT — DEMAND:
+Put that value in:
 
-        Look for demand under labels such as:
+"monthly_kwh_usage"
 
-        - Demand
-        - Peak Demand
-        - Maximum Demand
-        - Billed Demand
-        - Peak kW
-        - Demand kW
-        - kW Demand
-        - Maximum kW
-        - Recorded Demand
-        - Metered Demand
+Then calculate:
 
-        Extract the value in kW.
+annual_kwh_usage = monthly_kwh_usage × 12
 
-        If the bill contains multiple demand values,
-        prefer the billed/maximum demand for the relevant
-        billing period.
+Set:
 
-        If demand genuinely does not appear anywhere on
-        the bill, return an empty string.
+"annual_kwh_source": "monthly_usage_x12"
 
-        DO NOT invent or estimate demand.
+This is an ESTIMATED annual usage.
 
-        IMPORTANT — ELECTRICITY RATE:
+If a reliable kWh usage value exists, DO NOT leave
+annual_kwh_usage empty.
 
-        Find the actual electricity energy/supply rate
-        charged for electricity consumption.
+IMPORTANT:
 
-        Prefer an explicit $/kWh rate.
+Do not confuse:
+- kW with kWh
+- demand with energy usage
+- solar production with electricity consumption
 
-        If there is no explicit rate, calculate it ONLY if
-        the bill provides enough information:
+====================================================
+3. PEAK / BILLED DEMAND
+====================================================
 
-        energy/supply charges ÷ electricity kWh usage.
+Search the ENTIRE bill for demand information.
 
-        Do NOT include:
+Look for labels including:
 
-        - demand charges
-        - taxes
-        - fixed customer charges
-        - late fees
-        - unrelated delivery charges
+- Demand
+- Peak Demand
+- Maximum Demand
+- Billed Demand
+- Billing Demand
+- Peak kW
+- Demand kW
+- kW Demand
+- Maximum kW
+- Max Demand
+- Recorded Demand
+- Metered Demand
+- Actual Demand
+- Non-Coincident Peak
+- Coincident Peak
+- NCP
+- CP
+- Demand Usage
 
-        If a reliable electricity rate cannot be determined,
-        return an empty string.
+Also inspect:
+- rate tables
+- charges
+- meter sections
+- usage tables
+- demand charge lines
+- tariff information
+- billing detail pages
 
-        IMPORTANT — ADDRESS:
+IMPORTANT:
 
-        Extract the actual service/property address shown
-        on the bill.
+Demand is normally expressed in kW.
 
-        IMPORTANT — BILLING PERIOD:
+If a demand value is clearly shown in kW,
+extract the numeric value.
 
-        Return the start and end dates if available.
+If multiple demand values exist:
 
-        IMPORTANT:
+Prefer the billed or maximum demand associated
+with the current billing period.
 
-        Never invent a value.
+Do NOT confuse:
+- kWh usage
+- kW demand
+- kVA
+- power factor
+- solar system size
 
-        Return ONLY valid JSON.
+If demand genuinely does not appear anywhere
+on the bill, return:
 
-        Use exactly this structure:
+"peak_demand_kw": ""
 
-        {
-            "utility_provider": "",
-            "monthly_kwh_usage": "",
-            "annual_kwh_usage": "",
-            "annual_kwh_source": "",
-            "peak_demand_kw": "",
-            "billing_period": "",
-            "property_address": "",
-            "electric_rate_per_kwh": ""
-        }
+NEVER invent or estimate demand.
 
-        For annual_kwh_source use one of:
+====================================================
+4. BILLING PERIOD
+====================================================
 
-        "12-month-history"
+Extract the billing period start and end dates.
 
-        "monthly_usage_x12"
+Return them as one string.
 
-        ""
+Example:
 
-        Examples:
+"04/16/2025 - 05/15/2025"
 
-        If the bill contains 12 months:
+====================================================
+5. PROPERTY / SERVICE ADDRESS
+====================================================
 
-        {
-            "monthly_kwh_usage": "",
-            "annual_kwh_usage": "145000",
-            "annual_kwh_source": "12-month-history"
-        }
+Extract the actual service/property address shown
+on the bill.
 
-        If the bill contains one month with 12000 kWh:
+Do not use the mailing address if a separate
+service address is provided.
 
-        {
-            "monthly_kwh_usage": "12000",
-            "annual_kwh_usage": "144000",
-            "annual_kwh_source": "monthly_usage_x12"
-        }
+====================================================
+6. ELECTRICITY ENERGY RATE
+====================================================
 
-        If demand is not present:
+Find the actual electricity energy/supply rate
+charged for electricity consumption.
 
-        "peak_demand_kw": ""
+Look for:
 
-        Never use zero to mean missing data.
-        """
+- $/kWh
+- Energy Rate
+- Energy Charge
+- Supply Rate
+- Generation Rate
+- Electricity Rate
+- Usage Rate
+
+Prefer an explicit $/kWh rate.
+
+If there is no explicit $/kWh rate, calculate it ONLY
+when reliable information is available using:
+
+energy/supply charges ÷ electricity kWh usage
+
+Do NOT include:
+
+- demand charges
+- taxes
+- fixed customer charges
+- late fees
+- unrelated delivery charges
+
+If a reliable electricity rate cannot be determined,
+return an empty string.
+
+====================================================
+FINAL OUTPUT RULES
+====================================================
+
+Return ONLY ONE valid JSON object.
+
+DO NOT return:
+- Markdown
+- ```json
+- ``` 
+- explanations
+- notes
+- reasoning
+- comments
+- bullet points
+- text before the JSON
+- text after the JSON
+
+The response MUST begin with { and end with }.
+
+Use exactly this structure:
+
+{
+    "utility_provider": "",
+    "monthly_kwh_usage": "",
+    "annual_kwh_usage": "",
+    "annual_kwh_source": "",
+    "peak_demand_kw": "",
+    "billing_period": "",
+    "property_address": "",
+    "electric_rate_per_kwh": ""
+}
+
+For annual_kwh_source use ONLY:
+
+"12-month-history"
+
+"monthly_usage_x12"
+
+""
+
+If a value genuinely cannot be found,
+return an empty string.
+
+Never use zero to represent missing data.
+
+Never invent or estimate demand.
+"""
                         }
 
                     ]
@@ -2235,4 +2320,3 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=10000
     )
-        
