@@ -947,13 +947,13 @@ def webhook():
 
         print(
             "NREL API key found:",
-            bool(nlr_api_key)
+            bool(nrel_api_key)
         )
 
         if (
             latitude
             and longitude
-            and nlr_api_key
+            and nrel_api_key
         ):
 
             # CORRECT NREL PVWATTS V8 ENDPOINT
