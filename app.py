@@ -2,7 +2,6 @@ from flask import Flask, request, jsonify
 from openai import OpenAI
 import os
 import json
-from datetime import datetime
 import requests
 import tempfile
 import re
@@ -10,10 +9,7 @@ import re
 import cloudinary
 import cloudinary.uploader
 
-from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
 from reportlab.platypus import (
     SimpleDocTemplate,
     Paragraph,
@@ -21,6 +17,9 @@ from reportlab.platypus import (
     Table,
     TableStyle
 )
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
 
 
 # ============================================================
@@ -141,7 +140,7 @@ def get_bill_url(bill_data):
 
 
 # ============================================================
-# PROFESSIONAL PDF GENERATOR
+# PDF GENERATOR
 # ============================================================
 
 def create_underwriting_pdf(
@@ -163,215 +162,47 @@ def create_underwriting_pdf(
 
     styles = getSampleStyleSheet()
 
-    # ========================================================
-    # CUSTOM STYLES
-    # ========================================================
-
-    title_style = ParagraphStyle(
-        "ReportTitle",
-        parent=styles["Title"],
-        fontName="Helvetica-Bold",
-        fontSize=20,
-        leading=24,
-        alignment=1,
-        spaceAfter=8
-    )
-
-    subtitle_style = ParagraphStyle(
-        "Subtitle",
-        parent=styles["Normal"],
-        fontName="Helvetica",
-        fontSize=9,
-        leading=13,
-        alignment=1,
-        textColor=colors.grey
-    )
-
-    section_style = ParagraphStyle(
-        "Section",
-        parent=styles["Heading2"],
-        fontName="Helvetica-Bold",
-        fontSize=11,
-        leading=14,
-        spaceBefore=4,
-        spaceAfter=8
-    )
-
-    normal_style = ParagraphStyle(
-        "NormalReport",
-        parent=styles["Normal"],
-        fontName="Helvetica",
-        fontSize=9,
-        leading=13
-    )
-
-    small_style = ParagraphStyle(
-        "SmallReport",
-        parent=styles["Normal"],
-        fontName="Helvetica",
-        fontSize=7.5,
-        leading=10
-    )
-
-    metric_label_style = ParagraphStyle(
-        "MetricLabel",
-        parent=styles["Normal"],
-        fontName="Helvetica",
-        fontSize=7.5,
-        leading=9,
-        alignment=1
-    )
-
-    metric_value_style = ParagraphStyle(
-        "MetricValue",
-        parent=styles["Normal"],
-        fontName="Helvetica-Bold",
-        fontSize=12,
-        leading=14,
-        alignment=1
-    )
-
-    # ========================================================
-    # DOCUMENT
-    # ========================================================
-
     document = SimpleDocTemplate(
         output_path,
         pagesize=letter,
         rightMargin=40,
         leftMargin=40,
         topMargin=40,
-        bottomMargin=45
+        bottomMargin=40
     )
 
     story = []
 
-    # ========================================================
-    # HEADER
-    # ========================================================
-
     story.append(
         Paragraph(
-            "PRELIMINARY COMMERCIAL<br/>"
-            "SOLAR UNDERWRITING REPORT",
-            title_style
+            "PRELIMINARY COMMERCIAL SOLAR UNDERWRITING REPORT",
+            styles["Title"]
         )
     )
 
-    story.append(
-        Paragraph(
-            "Automated preliminary screening for commercial solar projects",
-            subtitle_style
-        )
-    )
-
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 12))
 
     story.append(
         Paragraph(
             "For preliminary screening only — subject to engineering, "
-            "utility, legal, tax, and financial review.",
-            subtitle_style
+            "utility, legal, and tax review.",
+            styles["Normal"]
         )
     )
 
-    story.append(Spacer(1, 18))
-
-    # ========================================================
-    # EXECUTIVE SUMMARY
-    # ========================================================
+    story.append(Spacer(1, 20))
 
     story.append(
         Paragraph(
-            "EXECUTIVE SUMMARY",
-            section_style
-        )
-    )
-
-    summary_data = [
-        [
-            Paragraph("SYSTEM SIZE", metric_label_style),
-            Paragraph("ANNUAL SOLAR PRODUCTION", metric_label_style),
-            Paragraph("PROJECT COST", metric_label_style),
-            Paragraph("YEAR 1 SAVINGS", metric_label_style)
-        ],
-        [
-            Paragraph(
-                f"{system_size_kw:.2f} kW"
-                if system_size_kw is not None
-                else "N/A",
-                metric_value_style
-            ),
-            Paragraph(
-                f"{annual_solar_kwh:,.0f} kWh"
-                if annual_solar_kwh is not None
-                else "N/A",
-                metric_value_style
-            ),
-            Paragraph(
-                f"${project_cost:,.0f}"
-                if project_cost is not None
-                else "N/A",
-                metric_value_style
-            ),
-            Paragraph(
-                f"${year_1_savings:,.0f}"
-                if year_1_savings is not None
-                else "N/A",
-                metric_value_style
-            )
-        ]
-    ]
-
-    summary_table = Table(
-        summary_data,
-        colWidths=[
-            1.55 * inch,
-            1.75 * inch,
-            1.55 * inch,
-            1.55 * inch
-        ],
-        rowHeights=[22, 30]
-    )
-
-    summary_table.setStyle(
-        TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5)
-        ])
-    )
-
-    story.append(summary_table)
-
-    story.append(Spacer(1, 18))
-
-    # ========================================================
-    # PROPERTY & UTILITY
-    # ========================================================
-
-    story.append(
-        Paragraph(
-            "PROPERTY & UTILITY",
-            section_style
+            "<b>PROPERTY & UTILITY</b>",
+            styles["Heading2"]
         )
     )
 
     property_data = [
-        [
-            "Property Address",
-            str(property_address or "N/A")
-        ],
-        [
-            "Utility Provider",
-            str(utility_provider or "N/A")
-        ],
-        [
-            "Underwriting Review",
-            str(review_flag or "N/A")
-        ]
+        ["Property Address", str(property_address or "N/A")],
+        ["Utility Provider", str(utility_provider or "N/A")],
+        ["Underwriting Review", str(review_flag or "N/A")]
     ]
 
     property_table = Table(
@@ -383,28 +214,18 @@ def create_underwriting_pdf(
         TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-            ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
-            ("FONTSIZE", (0, 0), (-1, -1), 9),
-            ("LEFTPADDING", (0, 0), (-1, -1), 7),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-            ("TOPPADDING", (0, 0), (-1, -1), 7),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 7)
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold")
         ])
     )
 
     story.append(property_table)
 
-    story.append(Spacer(1, 18))
-
-    # ========================================================
-    # SOLAR SYSTEM
-    # ========================================================
+    story.append(Spacer(1, 20))
 
     story.append(
         Paragraph(
-            "SOLAR SYSTEM",
-            section_style
+            "<b>SOLAR SYSTEM</b>",
+            styles["Heading2"]
         )
     )
 
@@ -431,29 +252,18 @@ def create_underwriting_pdf(
     solar_table.setStyle(
         TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-            ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
-            ("FONTSIZE", (0, 0), (-1, -1), 9),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 7),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-            ("TOPPADDING", (0, 0), (-1, -1), 7),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 7)
+            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold")
         ])
     )
 
     story.append(solar_table)
 
-    story.append(Spacer(1, 18))
-
-    # ========================================================
-    # FINANCIAL UNDERWRITING
-    # ========================================================
+    story.append(Spacer(1, 20))
 
     story.append(
         Paragraph(
-            "FINANCIAL UNDERWRITING",
-            section_style
+            "<b>FINANCIAL UNDERWRITING</b>",
+            styles["Heading2"]
         )
     )
 
@@ -517,73 +327,18 @@ def create_underwriting_pdf(
         TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
             ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-            ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
-            ("FONTSIZE", (0, 0), (-1, -1), 9),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 7),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
-            ("TOPPADDING", (0, 0), (-1, -1), 7),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 7)
+            ("VALIGN", (0, 0), (-1, -1), "TOP")
         ])
     )
 
     story.append(financial_table)
 
-    story.append(Spacer(1, 18))
-
-    # ========================================================
-    # REVIEW STATUS
-    # ========================================================
+    story.append(Spacer(1, 25))
 
     story.append(
         Paragraph(
-            "UNDERWRITING STATUS",
-            section_style
-        )
-    )
-
-    review_data = [
-        [
-            Paragraph(
-                str(review_flag or "N/A"),
-                ParagraphStyle(
-                    "ReviewStatus",
-                    parent=normal_style,
-                    fontName="Helvetica-Bold",
-                    fontSize=10,
-                    alignment=1
-                )
-            )
-        ]
-    ]
-
-    review_table = Table(
-        review_data,
-        colWidths=[6.5 * inch]
-    )
-
-    review_table.setStyle(
-        TableStyle([
-            ("BOX", (0, 0), (-1, -1), 1, colors.grey),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-            ("TOPPADDING", (0, 0), (-1, -1), 9),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 9)
-        ])
-    )
-
-    story.append(review_table)
-
-    story.append(Spacer(1, 18))
-
-    # ========================================================
-    # IMPORTANT NOTICE
-    # ========================================================
-
-    story.append(
-        Paragraph(
-            "IMPORTANT NOTICE",
-            section_style
+            "<b>IMPORTANT NOTICE</b>",
+            styles["Heading2"]
         )
     )
 
@@ -593,37 +348,13 @@ def create_underwriting_pdf(
             "It is not a final engineering design, tax opinion, utility "
             "interconnection study, investment recommendation, or guarantee "
             "of project economics. Final project decisions should be based "
-            "on qualified engineering, tax, legal, utility, and financial "
-            "review.",
-            normal_style
+            "on qualified engineering, tax, legal, utility, and financial review.",
+            styles["Normal"]
         )
     )
-
-    story.append(Spacer(1, 15))
-
-    # ========================================================
-    # FOOTER
-    # ========================================================
-
-    story.append(
-        Paragraph(
-            "Automated Preliminary Commercial Solar Underwriting",
-            small_style
-        )
-    )
-
-    story.append(
-        Paragraph(
-            "Confidential — For preliminary screening purposes only",
-            small_style
-        )
-    )
-
-    # ========================================================
-    # BUILD PDF
-    # ========================================================
 
     document.build(story)
+
 
 # ============================================================
 # HOME
@@ -806,254 +537,82 @@ def webhook():
                             "type": "input_text",
 
                             "text": """
-You are extracting commercial electricity bill data
-for preliminary solar underwriting.
-
-Read the ENTIRE utility bill carefully.
-
-Check ALL pages, tables, usage history, meter information,
-charges, demand sections, rate information, and service
-information.
-
-NEVER guess or invent information.
-
-====================================================
-1. UTILITY PROVIDER
-====================================================
-
-Extract the utility/electric company name.
-
-Look for:
-- Utility Provider
-- Electric Company
-- Service Provider
-- Account Information
-- Company logo/name
-
-====================================================
-2. ELECTRICITY USAGE
-====================================================
-
-Extract electricity consumption in kWh.
-
-Look for:
-- kWh
-- Usage
-- Electricity Usage
-- Energy Usage
-- Total Usage
-- Energy Consumption
-- Meter Usage
-- Monthly Usage
-- Historical Usage
-- Usage History
-- Imported kWh
-- Delivered kWh
-- Consumption
-
-If the bill contains a 12-month usage history:
-
-Add the reliable monthly kWh values to calculate
-annual_kwh_usage.
-
-Set:
-
-"annual_kwh_source": "12-month-history"
-
-If the bill contains only ONE reliable billing-period
-usage value:
-
-Put that value in:
-
-"monthly_kwh_usage"
-
-Then calculate:
-
-annual_kwh_usage = monthly_kwh_usage × 12
-
-Set:
-
-"annual_kwh_source": "monthly_usage_x12"
-
-This is an ESTIMATED annual usage.
-
-If a reliable kWh usage value exists, DO NOT leave
-annual_kwh_usage empty.
-
-IMPORTANT:
-
-Do not confuse:
-- kW with kWh
-- demand with energy usage
-- solar production with electricity consumption
-
-====================================================
-3. PEAK / BILLED DEMAND
-====================================================
-
-Search the ENTIRE bill for demand information.
-
-Look for labels including:
-
-- Demand
-- Peak Demand
-- Maximum Demand
-- Billed Demand
-- Billing Demand
-- Peak kW
-- Demand kW
-- kW Demand
-- Maximum kW
-- Max Demand
-- Recorded Demand
-- Metered Demand
-- Actual Demand
-- Non-Coincident Peak
-- Coincident Peak
-- NCP
-- CP
-- Demand Usage
-
-Also inspect:
-- rate tables
-- charges
-- meter sections
-- usage tables
-- demand charge lines
-- tariff information
-- billing detail pages
-
-IMPORTANT:
-
-Demand is normally expressed in kW.
-
-If a demand value is clearly shown in kW,
-extract the numeric value.
-
-If multiple demand values exist:
-
-Prefer the billed or maximum demand associated
-with the current billing period.
-
-Do NOT confuse:
-- kWh usage
-- kW demand
-- kVA
-- power factor
-- solar system size
-
-If demand genuinely does not appear anywhere
-on the bill, return:
-
-"peak_demand_kw": ""
-
-NEVER invent or estimate demand.
-
-====================================================
-4. BILLING PERIOD
-====================================================
-
-Extract the billing period start and end dates.
-
-Return them as one string.
-
-Example:
-
-"04/16/2025 - 05/15/2025"
-
-====================================================
-5. PROPERTY / SERVICE ADDRESS
-====================================================
-
-Extract the actual service/property address shown
-on the bill.
-
-Do not use the mailing address if a separate
-service address is provided.
-
-====================================================
-6. ELECTRICITY ENERGY RATE
-====================================================
-
-Find the actual electricity energy/supply rate
-charged for electricity consumption.
-
-Look for:
-
-- $/kWh
-- Energy Rate
-- Energy Charge
-- Supply Rate
-- Generation Rate
-- Electricity Rate
-- Usage Rate
-
-Prefer an explicit $/kWh rate.
-
-If there is no explicit $/kWh rate, calculate it ONLY
-when reliable information is available using:
-
-energy/supply charges ÷ electricity kWh usage
-
-Do NOT include:
-
-- demand charges
-- taxes
-- fixed customer charges
-- late fees
-- unrelated delivery charges
-
-If a reliable electricity rate cannot be determined,
-return an empty string.
-
-====================================================
-FINAL OUTPUT RULES
-====================================================
-
-Return ONLY ONE valid JSON object.
-
-DO NOT return:
-- Markdown
-- ```json
-- ``` 
-- explanations
-- notes
-- reasoning
-- comments
-- bullet points
-- text before the JSON
-- text after the JSON
-
-The response MUST begin with { and end with }.
-
-Use exactly this structure:
-
-{
-    "utility_provider": "",
-    "monthly_kwh_usage": "",
-    "annual_kwh_usage": "",
-    "annual_kwh_source": "",
-    "peak_demand_kw": "",
-    "billing_period": "",
-    "property_address": "",
-    "electric_rate_per_kwh": ""
-}
-
-For annual_kwh_source use ONLY:
-
-"12-month-history"
-
-"monthly_usage_x12"
-
-""
-
-If a value genuinely cannot be found,
-return an empty string.
-
-Never use zero to represent missing data.
-
-Never invent or estimate demand.
-"""
+        You are extracting commercial electricity bill data for EPC solar underwriting. TEXAS COMMERCIAL IS SPECIAL.
+
+        Read ENTIRE bill. Check ALL pages for meter details, demand sections, solar registers.
+
+        CRITICAL - DETECT SOLAR BILL (POST-SOLAR):
+        Look for:
+        - "Reg 9" / "Reg 10" / "Billing/Delivered" vs "PV Surplus Export"
+        - "Solar Production Meter" / "Gross Production"
+        - "Net Billing Consumption" / "NEG" / "Excess Generation"
+        - Two meters: one for delivered, one for export
+        
+        If you see BOTH delivered and export registers, this is a POST-SOLAR bill. Set is_post_solar_bill = true.
+
+        Extract:
+        1. Utility provider
+        2. Delivered kWh (Reg 9 / Billing Meter / Oncor Delivered) - gross from grid
+        3. Export kWh (Reg 10 / PV Surplus / Export) - sent to grid
+        4. Gross solar production kWh if present (Production Meter)
+        5. Net billing kWh (Delivered - Export) if shown
+        6. Self-consumption = Gross Production - Export (if both present)
+        7. TRUE site load = Delivered + Self-Consumption (THIS IS THE REAL BASELINE)
+        8. Peak demand kW, demand rate $/kW, demand charge $
+        9. All energy rates: base $/kWh, fuel adj $/kWh, regulatory adj $/kWh, buyback/export credit $/kWh
+        10. Billing period, address
+
+        USAGE LOGIC FOR EPC:
+        - If POST-SOLAR bill: monthly_true_site_kwh = delivered + self_consumption
+        - If PRE-SOLAR bill: monthly_true_site_kwh = delivered (or total usage)
+        - Annual true site = monthly_true_site_kwh * 12 (or sum 12-month history of true site)
+        - Also return monthly_net_billing_kwh = delivered - export (this is what bill shows as billable)
+
+        DEMAND:
+        Look for Demand, Peak Demand, Billed Demand, kW, Distribution Demand, Transmission Demand, Ratchet.
+        Extract peak_demand_kw AND demand_rate_per_kw AND demand_charge if available.
+
+        RATES:
+        Extract separately:
+        - base_energy_rate_per_kwh
+        - fuel_adjustment_per_kwh
+        - regulatory_adjustment_per_kwh
+        - export_buyback_rate_per_kwh (credit rate for export, usually $0.02-$0.08 in Texas)
+        - demand_rate_per_kw
+
+        Return ONLY valid JSON with this structure:
+        {
+            "utility_provider": "",
+            "is_post_solar_bill": false,
+            "monthly_delivered_kwh": "",
+            "monthly_export_kwh": "",
+            "monthly_gross_production_kwh": "",
+            "monthly_self_consumption_kwh": "",
+            "monthly_net_billing_kwh": "",
+            "monthly_true_site_kwh": "",
+            "monthly_kwh_usage": "", 
+            "annual_kwh_usage": "",
+            "annual_true_site_kwh": "",
+            "annual_kwh_source": "",
+            "peak_demand_kw": "",
+            "demand_rate_per_kw": "",
+            "demand_charge": "",
+            "billing_period": "",
+            "property_address": "",
+            "electric_rate_per_kwh": "",
+            "base_energy_rate_per_kwh": "",
+            "fuel_adjustment_per_kwh": "",
+            "regulatory_adjustment_per_kwh": "",
+            "export_buyback_rate_per_kwh": "",
+            "total_effective_rate_per_kwh": ""
+        }
+
+        For monthly_kwh_usage legacy field, set it = monthly_true_site_kwh if post-solar, else delivered.
+
+        For annual_kwh_source use: "true-site-reconstructed" if post-solar, "12-month-history", "monthly_usage_x12", or ""
+
+        Never use zero for missing. Return empty string if not found.
+        """
                         }
 
                     ]
@@ -1076,7 +635,7 @@ Never invent or estimate demand.
 
         print(contact_id)
 
-       # ==========================================
+        # ==========================================
         # CONVERT AI RESPONSE TO JSON
         # ==========================================
 
@@ -1126,11 +685,7 @@ Never invent or estimate demand.
             print("========================")
 
             print("Error:", str(e))
-
-            print(
-                "Raw AI response:",
-                result.output_text
-            )
+            print("Raw AI response:", result.output_text)
 
             extracted_data = {}
 
@@ -1403,7 +958,7 @@ Never invent or estimate demand.
 
             # CORRECT NREL PVWATTS V8 ENDPOINT
             pvwatts_url = (
-                "https://developer.nlr.gov/"
+                "https://developer.nrel.gov/"
                 "api/pvwatts/v8.json"
             )
 
@@ -1479,44 +1034,77 @@ Never invent or estimate demand.
                 )
 
         # ====================================================
-        # USAGE CALCULATION
+        # USAGE CALCULATION - CORRECTED FOR TEXAS COMMERCIAL + POST-SOLAR
         # ====================================================
 
-        annual_kwh = clean_number(
-            extracted_data.get(
-                "annual_kwh_usage"
-            )
-        )
+        # New fields from enhanced extraction
+        monthly_delivered_kwh = clean_number(extracted_data.get("monthly_delivered_kwh"))
+        monthly_export_kwh = clean_number(extracted_data.get("monthly_export_kwh"))
+        monthly_gross_prod_kwh = clean_number(extracted_data.get("monthly_gross_production_kwh"))
+        monthly_self_cons_kwh = clean_number(extracted_data.get("monthly_self_consumption_kwh"))
+        monthly_net_billing_kwh = clean_number(extracted_data.get("monthly_net_billing_kwh"))
+        monthly_true_site_kwh = clean_number(extracted_data.get("monthly_true_site_kwh"))
+        annual_true_site_kwh = clean_number(extracted_data.get("annual_true_site_kwh"))
+        is_post_solar = extracted_data.get("is_post_solar_bill") is True or str(extracted_data.get("is_post_solar_bill")).lower() == "true"
 
-        current_period_kwh = clean_number(
-            extracted_data.get(
-                "monthly_kwh_usage"
-            )
-        )
+        # Fallback: compute self-consumption if not provided
+        if monthly_self_cons_kwh is None and monthly_gross_prod_kwh and monthly_export_kwh:
+            monthly_self_cons_kwh = monthly_gross_prod_kwh - monthly_export_kwh
 
-        peak_demand_kw = clean_number(
-            extracted_data.get(
-                "peak_demand_kw"
-            )
-        )
+        # Fallback: true site = delivered + self-consumption
+        if monthly_true_site_kwh is None:
+            if is_post_solar and monthly_delivered_kwh is not None and monthly_self_cons_kwh is not None:
+                monthly_true_site_kwh = monthly_delivered_kwh + monthly_self_cons_kwh
+                is_post_solar = True
+            elif monthly_delivered_kwh is not None:
+                # Pre-solar bill
+                monthly_true_site_kwh = monthly_delivered_kwh
 
+        # Legacy fields for compatibility
+        annual_kwh = clean_number(extracted_data.get("annual_kwh_usage"))
+        current_period_kwh = clean_number(extracted_data.get("current_period_kwh"))
+        peak_demand_kw = clean_number(extracted_data.get("peak_demand_kw"))
+        
+        # NEW: demand rate and export credit rate
+        demand_rate_per_kw = clean_number(extracted_data.get("demand_rate_per_kw")) or clean_number(extracted_data.get("demand_rate"))
+        export_buyback_rate = clean_number(extracted_data.get("export_buyback_rate_per_kwh"))
+        fuel_adj_per_kwh = clean_number(extracted_data.get("fuel_adjustment_per_kwh"))
+        base_energy_rate = clean_number(extracted_data.get("base_energy_rate_per_kwh"))
+
+        # Determine annual usage - prioritize true site
         usage_source = "bill_annual"
+        annual_kwh_true = None
 
-        # If annual usage isn't available,
-        # annualize the current billing period.
-        if (
-            annual_kwh is None
-            and current_period_kwh is not None
-            and current_period_kwh > 0
-        ):
+        if annual_true_site_kwh:
+            annual_kwh_true = annual_true_site_kwh
+            usage_source = "true-site-reconstructed"
+        elif monthly_true_site_kwh:
+            annual_kwh_true = monthly_true_site_kwh * 12
+            usage_source = "true_site_monthly_x12" if is_post_solar else "monthly_usage_x12"
+        elif annual_kwh:
+            # If AI returned annual_kwh that is actually net, we need to flag
+            if is_post_solar and monthly_true_site_kwh:
+                annual_kwh_true = monthly_true_site_kwh * 12
+                usage_source = "true_site_corrected_from_net"
+            else:
+                annual_kwh_true = annual_kwh
 
-            annual_kwh = (
-                current_period_kwh * 12
-            )
+        # For backward compatibility, set annual_kwh to true site
+        if annual_kwh_true:
+            annual_kwh = annual_kwh_true
 
-            usage_source = (
-                "annualized_current_billing_period"
-            )
+        # If still no annual, fallback to current_period_kwh *12
+        if annual_kwh is None and current_period_kwh is not None and current_period_kwh > 0:
+            annual_kwh = current_period_kwh * 12
+            usage_source = "annualized_current_billing_period"
+
+        # NEG detection
+        is_neg_bill = False
+        if monthly_net_billing_kwh is not None and monthly_net_billing_kwh < 0:
+            is_neg_bill = True
+        if monthly_delivered_kwh and monthly_export_kwh and monthly_delivered_kwh < monthly_export_kwh:
+            is_neg_bill = True
+
 
         # ====================================================
         # PRELIMINARY SYSTEM SIZING
@@ -1526,15 +1114,18 @@ Never invent or estimate demand.
 
         estimated_annual_solar_kwh = None
 
+        # Use true site annual for sizing, not net billing
+        annual_kwh_for_sizing = annual_kwh_true if 'annual_kwh_true' in locals() and annual_kwh_true else annual_kwh
+
         if (
-            annual_kwh is not None
-            and annual_kwh > 0
+            annual_kwh_for_sizing is not None
+            and annual_kwh_for_sizing > 0
             and annual_production_per_kw is not None
             and annual_production_per_kw > 0
         ):
 
             preliminary_system_size_kw = (
-                annual_kwh
+                annual_kwh_for_sizing
                 / annual_production_per_kw
             )
 
@@ -1542,6 +1133,11 @@ Never invent or estimate demand.
                 preliminary_system_size_kw
                 * annual_production_per_kw
             )
+            
+            # Commercial sanity check: system should not exceed ~80% of peak demand in kW
+            # If it does, flag it
+            if peak_demand_kw and preliminary_system_size_kw > peak_demand_kw * 1.2:
+                print(f"WARNING: System size {preliminary_system_size_kw}kW exceeds 120% of peak demand {peak_demand_kw}kW")
 
         print("\n========================")
         print("PRELIMINARY SYSTEM SIZING")
@@ -1589,57 +1185,86 @@ Never invent or estimate demand.
         )
 
         # ====================================================
-        # FINANCIAL VARIABLES
+        # FINANCIAL VARIABLES - CORRECTED FOR COMMERCIAL
         # ====================================================
 
+        # Commercial Texas realistic default: $1.95/W not $1.50
         cost_per_watt = clean_number(
             os.environ.get(
                 "SOLAR_COST_PER_WATT",
-                "1.50"
+                "1.95"
             )
         )
 
         if cost_per_watt is None:
-            cost_per_watt = 1.50
+            cost_per_watt = 1.95
 
         estimated_project_cost = None
-
         estimated_year_1_savings = None
-
         simple_payback_years = None
 
-        # ====================================================
-        # PROJECT COST
-        # ====================================================
-
+        # Project cost
         if preliminary_system_size_kw is not None:
-
             estimated_project_cost = (
                 preliminary_system_size_kw
                 * 1000
                 * cost_per_watt
             )
 
-        # ====================================================
-        # ELECTRICITY RATE
-        # ====================================================
+        # Electricity rates - combine base + fuel + regulatory for true effective rate
+        electricity_rate = clean_number(extracted_data.get("electric_rate_per_kwh"))
+        base_rate = clean_number(extracted_data.get("base_energy_rate_per_kwh")) or electricity_rate
+        fuel_adj = clean_number(extracted_data.get("fuel_adjustment_per_kwh")) or 0
+        reg_adj = clean_number(extracted_data.get("regulatory_adjustment_per_kwh")) or 0
+        
+        # Effective rate = base + fuel + regulatory (what customer actually pays per kWh)
+        total_effective_rate = None
+        if base_rate:
+            total_effective_rate = base_rate + (fuel_adj or 0) + (reg_adj or 0)
+        elif electricity_rate:
+            total_effective_rate = electricity_rate
 
-        electricity_rate = clean_number(
-            extracted_data.get(
-                "electric_rate_per_kwh"
-            )
-        )
+        # Use effective rate for savings if available
+        effective_rate_for_savings = total_effective_rate or electricity_rate
 
-        if (
-            estimated_annual_solar_kwh is not None
-            and electricity_rate is not None
-            and electricity_rate > 0
-        ):
+        # === CORRECTED SAVINGS CALCULATION FOR COMMERCIAL ===
+        # For commercial, savings = Energy savings + Demand savings + Export credit value
+        demand_rate_per_kw_val = clean_number(extracted_data.get("demand_rate_per_kw")) or 8.50  # default Texas commercial
+        export_rate = clean_number(extracted_data.get("export_buyback_rate_per_kwh")) or 0.0585
+        coincidence_factor = float(os.environ.get("DEMAND_COINCIDENCE_FACTOR", "0.6"))  # solar offsets ~60% of peak demand
 
-            estimated_year_1_savings = (
-                estimated_annual_solar_kwh
-                * electricity_rate
-            )
+        estimated_energy_savings = None
+        estimated_demand_savings = None
+        estimated_export_value = None
+
+        if estimated_annual_solar_kwh is not None and effective_rate_for_savings:
+            # For post-solar bills, annual solar kWh already accounts for self-consumption
+            # Use self-consumption portion at retail rate, export at buyback rate
+            if monthly_self_cons_kwh and monthly_gross_prod_kwh and monthly_gross_prod_kwh > 0:
+                self_cons_ratio = monthly_self_cons_kwh / monthly_gross_prod_kwh
+                # Annual self-consumed solar offsets retail rate
+                annual_self_cons_kwh = estimated_annual_solar_kwh * self_cons_ratio
+                annual_export_kwh = estimated_annual_solar_kwh * (1 - self_cons_ratio)
+                estimated_energy_savings = annual_self_cons_kwh * effective_rate_for_savings
+                estimated_export_value = annual_export_kwh * export_rate
+            else:
+                # Pre-solar or no breakdown: assume 70% self-consumption typical for commercial
+                estimated_energy_savings = estimated_annual_solar_kwh * 0.7 * effective_rate_for_savings
+                estimated_export_value = estimated_annual_solar_kwh * 0.3 * export_rate
+
+        # Demand savings - critical for commercial EPC
+        if peak_demand_kw and peak_demand_kw > 0:
+            # Demand savings = peak_kw * coincidence * demand_rate * 12 months
+            estimated_demand_savings = peak_demand_kw * coincidence_factor * demand_rate_per_kw_val * 12
+
+        # Total Year 1 savings
+        if estimated_energy_savings is not None:
+            estimated_year_1_savings = estimated_energy_savings
+            if estimated_demand_savings:
+                estimated_year_1_savings += estimated_demand_savings
+            if estimated_export_value:
+                estimated_year_1_savings += estimated_export_value
+        
 
         # ====================================================
         # SIMPLE PAYBACK
@@ -1857,28 +1482,34 @@ Never invent or estimate demand.
                 "Year 1 savings"
             )
 
+        # Enhanced review flags for EPC
+        review_notes = []
+        if is_post_solar:
+            review_notes.append("POST-SOLAR BILL DETECTED - True site reconstructed")
+        if 'is_neg_bill' in locals() and is_neg_bill:
+            review_notes.append("NEG BILL - Export > Delivered")
+        if peak_demand_kw and preliminary_system_size_kw and preliminary_system_size_kw > peak_demand_kw:
+            review_notes.append(f"System {preliminary_system_size_kw:.1f}kW > Peak {peak_demand_kw:.1f}kW - Verify")
+        
         if missing_inputs:
-
             underwriting_review_flag = (
                 "REVIEW REQUIRED - Missing: "
                 + ", ".join(missing_inputs)
             )
-
         elif (
             preliminary_tax_credit_rate is None
             or estimated_tax_credit is None
             or estimated_net_project_cost is None
         ):
-
             underwriting_review_flag = (
                 "PRELIMINARY - INCENTIVE REVIEW REQUIRED"
             )
-
         else:
+            if review_notes:
+                underwriting_review_flag = "PRELIMINARY - PASS | " + " | ".join(review_notes)
+            else:
+                underwriting_review_flag = "PRELIMINARY - PASS"
 
-            underwriting_review_flag = (
-                "PRELIMINARY - PASS"
-            )
 
         # ====================================================
         # LOG FINANCIAL UNDERWRITING
@@ -2296,40 +1927,6 @@ Never invent or estimate demand.
                 },
 
                 # --------------------------------------------
-# AI Simple Payback Period
-# --------------------------------------------
-
-{
-    "id": "AeEgvEUeMmZuSL9n6eC9",
-    "fieldValue":
-        str(
-            round(
-                simple_payback_years,
-                2
-            )
-        )
-        if simple_payback_years is not None
-        else ""
-},
-
-# --------------------------------------------
-# AI Estimated Project Cost
-# --------------------------------------------
-
-{
-    "id": "EOVpbGis50W09r81T2Qx",
-    "fieldValue":
-        str(
-            round(
-                estimated_project_cost,
-                2
-            )
-        )
-        if estimated_project_cost is not None
-        else ""
-},
-
-                # --------------------------------------------
                 # Incentive-adjusted payback
                 # --------------------------------------------
 
@@ -2464,81 +2061,6 @@ Never invent or estimate demand.
                         "investment or project decisions."
                     )
                 },
-
-                # --------------------------------------------
-# AI Year 1 Savings
-# --------------------------------------------
-
-{
-    "id": "X03ssAuZyYxUEH4tqgVh",
-    "fieldValue":
-        str(
-            round(
-                estimated_year_1_savings,
-                2
-            )
-        )
-        if estimated_year_1_savings is not None
-        else ""
-},
-
-# --------------------------------------------
-# AI Project Status
-# --------------------------------------------
-
-{
-    "id": "MUtdaLNzU9Tfo4QCA7My",
-    "fieldValue":
-        underwriting_review_flag
-        if underwriting_review_flag
-        else ""
-},
-
-# --------------------------------------------
-# AI Underwriting Date
-# --------------------------------------------
-
-{
-    "id": "53IwRtm9lEMsB4FZM7A1",
-    "fieldValue":
-        datetime.now().strftime("%Y-%m-%d")
-},
-
-# --------------------------------------------
-# Latitude
-# --------------------------------------------
-
-{
-    "id": "mRLoTd4hSRgb4Omp4KHa",
-    "fieldValue":
-        str(latitude)
-        if latitude is not None
-        else ""
-},
-
-# --------------------------------------------
-# Longitude
-# --------------------------------------------
-
-{
-    "id": "jAoRTkNL6Zyp3nQMVzQ3",
-    "fieldValue":
-        str(longitude)
-        if longitude is not None
-        else ""
-},
-
-# --------------------------------------------
-# AI Engineering Review
-# --------------------------------------------
-
-{
-    "id": "l1d7ngh9d2EdQ7AuZB9f",
-    "fieldValue":
-        underwriting_review_flag
-        if underwriting_review_flag
-        else ""
-},
 
                 # --------------------------------------------
                 # AI Underwriting Report URL
@@ -2696,5 +2218,5 @@ if __name__ == "__main__":
 
     app.run(
         host="0.0.0.0",
-        port=10000
+        port=int(os.environ.get("PORT", 10000))
     )
