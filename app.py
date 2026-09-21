@@ -1216,13 +1216,29 @@ def webhook():
         base_rate = clean_number(extracted_data.get("base_energy_rate_per_kwh")) or electricity_rate
         fuel_adj = clean_number(extracted_data.get("fuel_adjustment_per_kwh")) or 0
         reg_adj = clean_number(extracted_data.get("regulatory_adjustment_per_kwh")) or 0
+        fuel_adj_env = clean_number(os.environ.get("DEFAULT_FUEL_ADJ", "0.0314")) or 0.0314
+        reg_adj_env = clean_number(os.environ.get("DEFAULT_REG_ADJ", "0.01494")) or 0.01494
+        default_rate = clean_number(os.environ.get("DEFAULT_ELECTRIC_RATE", "0.0821")) or 0.0821
+        
+        # If AI failed to extract rates, use Texas commercial defaults
+        if base_rate is None:
+            base_rate = default_rate
+            print(f"Using default base rate {base_rate} - AI extraction failed")
+        if fuel_adj == 0:
+            fuel_adj = fuel_adj_env
+        if reg_adj == 0:
+            reg_adj = reg_adj_env
         
         # Effective rate = base + fuel + regulatory (what customer actually pays per kWh)
         total_effective_rate = None
         if base_rate:
             total_effective_rate = base_rate + (fuel_adj or 0) + (reg_adj or 0)
+            electricity_rate = total_effective_rate  # For compatibility
         elif electricity_rate:
             total_effective_rate = electricity_rate
+        else:
+            total_effective_rate = default_rate + fuel_adj + reg_adj
+            electricity_rate = total_effective_rate
 
         # Use effective rate for savings if available
         effective_rate_for_savings = total_effective_rate or electricity_rate
