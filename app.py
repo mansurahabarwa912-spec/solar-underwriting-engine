@@ -227,20 +227,46 @@ def get_attom_property_data(address, api_key):
             except Exception as e:
                 print(f"ATTOM Try 5 AVM error: {e}")
 
-        # TRY 6: AVM by address if no attomId
+        # TRY 6: AVM by address if no attomId - detailavm (property + AVM)
         if not avm_json:
             try:
                 url_avm = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detailavm"
                 params = {"address1": address1, "address2": address2}
-                print(f"ATTOM Try 6 AVM by address")
+                print(f"ATTOM Try 6 AVM (detailavm) by address")
                 r = requests.get(url_avm, headers=headers, params=params, timeout=20)
-                print(f"ATTOM Try 6 AVM status: {r.status_code}")
+                print(f"ATTOM Try 6 detailavm status: {r.status_code} body: {r.text[:400]}")
                 if r.status_code == 200:
                     j = r.json()
                     if j.get("property") and len(j["property"]) > 0:
                         avm_json = j["property"][0]
+                        print(f"ATTOM Try 6 detailavm SUCCESS - AVM found")
+                elif r.status_code == 404:
+                    # 404 for detailavm usually means commercial property - AVM is residential only
+                    # This is NOT a plan issue - free plan DOES include AVM for residential
+                    print(f"ATTOM Try 6 detailavm 404 - likely commercial property (AVM is residential-only) or address not in AVM DB - NOT a plan limitation")
             except Exception as e:
                 print(f"ATTOM Try 6 AVM error: {e}")
+
+        # TRY 7: Pure AVM endpoint /avm/detail - this is the other AVM endpoint that free plan includes
+        if not avm_json:
+            try:
+                url_avm_pure = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/avm/detail"
+                params = {"address1": address1, "address2": address2}
+                print(f"ATTOM Try 7 AVM (avm/detail) by address - free plan includes this")
+                r = requests.get(url_avm_pure, headers=headers, params=params, timeout=20)
+                print(f"ATTOM Try 7 avm/detail status: {r.status_code} body: {r.text[:400]}")
+                if r.status_code == 200:
+                    j = r.json()
+                    # avm/detail returns different structure
+                    if j.get("property") and len(j["property"]) > 0:
+                        avm_json = j["property"][0]
+                        print(f"ATTOM Try 7 avm/detail SUCCESS - AVM found")
+                    elif j.get("avm"):
+                        # Some responses have avm at top level
+                        avm_json = j
+                        print(f"ATTOM Try 7 avm/detail SUCCESS - AVM at top level")
+            except Exception as e:
+                print(f"ATTOM Try 7 avm/detail error: {e}")
 
         print(f"ATTOM detail_json empty? {not bool(detail_json)} avm_json empty? {not bool(avm_json)}")
         if detail_json:
