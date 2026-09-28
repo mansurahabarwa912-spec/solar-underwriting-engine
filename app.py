@@ -665,7 +665,7 @@ def webhook():
         pvwatts_data = {}
         if latitude and longitude and nrel_api_key:
             try:
-                pvwatts_url = "https://developer.nrel.gov/api/pvwatts/v8.json"
+                pvwatts_url = "https://developer.nlr.gov/api/pvwatts/v8.json"
                 pvwatts_params = {
                     "api_key": nrel_api_key,
                     "lat": latitude,
