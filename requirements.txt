@@ -4,3 +4,8 @@ requests==2.32.4
 openai==1.101.0
 reportlab==5.0.1
 cloudinary==1.46.0
+PyMupdf2==0.5.1
+python-dotenv==1.0.0
+git add app.py
+git commit -m "v9"
+git push origin main
