@@ -436,17 +436,35 @@ def get_attom_property_data(address, api_key):
             else:
                 avm_value = clean_number(amt)
         
-        # If market_value still None, ALWAYS use DEFAULT_PROPERTY_VALUE for commercial bankability
-        # Building * $350 underestimates commercial - a 2,600 sqft building on 34k sqft lot hosting 1MW system is worth $2.5M+
+        # SMART FALLBACK: Residential vs Commercial based on system size
         if not market_value:
-            default_val = 2500000
             try:
                 import os as _os
-                default_val = float(_os.environ.get("DEFAULT_PROPERTY_VALUE", "2500000").replace(",",""))
-            except:
-                default_val = 2500000
-            market_value = default_val
-            print(f"ATTOM no market value in county data - using DEFAULT_PROPERTY_VALUE fallback ${market_value:,.0f} for bankability")
+                # Estimate system size from annual usage for fallback decision
+                try:
+                    annual_for_est = float(str(locals().get("annual_kwh", "")).replace(",","").replace("kWh","").strip()) if locals().get("annual_kwh") else 0
+                    if annual_for_est == 0:
+                        # Try from extraction dict
+                        extracted_data = locals().get("extracted") or {}
+                        annual_for_est = float(str(extracted_data.get("annual_kwh_usage", "0")).replace(",", "")) if extracted_data.get("annual_kwh_usage") else 50000
+                except:
+                    annual_for_est = 50000
+                
+                est_system_kw = annual_for_est / 1450.0
+                
+                if est_system_kw < 30:  # Residential / Small Commercial
+                    default_val_str = _os.environ.get("DEFAULT_PROPERTY_VALUE_RESIDENTIAL", "400000")
+                    default_val = float(default_val_str.replace(",",""))
+                    print(f"ATTOM SMART: Small system {est_system_kw:.1f}kW <30kW → RESIDENTIAL default ${default_val:,.0f}")
+                else:  # Commercial
+                    default_val_str = _os.environ.get("DEFAULT_PROPERTY_VALUE", "2500000")
+                    default_val = float(default_val_str.replace(",",""))
+                    print(f"ATTOM SMART: Commercial system {est_system_kw:.1f}kW → COMMERCIAL default ${default_val:,.0f}")
+                
+                market_value = default_val
+            except Exception as e:
+                print(f"ATTOM fallback error {e}, using $2.5M commercial default")
+                market_value = 2500000
 
         # Ensure lot size is never None for this known Dallas property - use ATTOM values from logs
         if not lot_size_sqft:
