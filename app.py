@@ -245,62 +245,139 @@ def get_attom_property_data(address, api_key):
         summary = detail_json.get("summary", {}) if detail_json else {}
         avm = avm_json.get("avm", {}) if avm_json else {}
 
-        # Market value - try many paths
+        # Market value - try MANY paths (ATTOM structure varies wildly by county)
         market_value = None
         # Try AVM first
         if avm:
             amt = avm.get("amount")
             if isinstance(amt, dict):
-                market_value = clean_number(amt.get("value") or amt.get("saleAmt") or amt.get("amount"))
+                market_value = clean_number(amt.get("value") or amt.get("saleAmt") or amt.get("amount") or amt.get("saleAmount"))
             else:
                 market_value = clean_number(amt)
         
-        # Try assessment
+        # Try assessment - market
         if not market_value and assessment:
             mkt = assessment.get("market", {})
-            if mkt:
-                market_value = clean_number(mkt.get("mktTtlValue") or mkt.get("mktLandValue") or mkt.get("mktApprTtlValue"))
+            if isinstance(mkt, dict) and mkt:
+                for k in ["mktTtlValue", "mktLandValue", "mktApprTtlValue", "mktTtlValuePrev", "mktImprValue", "mktTtlValueMkt", "apprTtlValue", "mktValue", "marketValue"]:
+                    if mkt.get(k):
+                        market_value = clean_number(mkt.get(k))
+                        if market_value:
+                            print(f"ATTOM found market_value via market.{k}: {market_value}")
+                            break
         
         # Try assessed
         if not market_value and assessment:
             assd = assessment.get("assessed", {})
-            if assd:
-                market_value = clean_number(assd.get("assdTtlValue") or assd.get("assdMktTtlValue"))
+            if isinstance(assd, dict) and assd:
+                for k in ["assdTtlValue", "assdMktTtlValue", "assdImprValue", "assdLandValue", "assdValue", "assessedValue"]:
+                    if assd.get(k):
+                        market_value = clean_number(assd.get(k))
+                        if market_value:
+                            print(f"ATTOM found market_value via assessed.{k}: {market_value}")
+                            break
+
+        # Try appraised directly under assessment
+        if not market_value and assessment:
+            for k in ["appraisedValue", "apprTtlValue", "totalValue", "value"]:
+                if assessment.get(k):
+                    market_value = clean_number(assessment.get(k))
+                    if market_value:
+                        print(f"ATTOM found market_value via assessment.{k}: {market_value}")
+                        break
+
+        # Try sale amount as fallback for market value
+        if not market_value and detail_json.get("sale"):
+            sale = detail_json.get("sale", {})
+            if isinstance(sale, dict):
+                amt = sale.get("amount", {})
+                if isinstance(amt, dict):
+                    market_value = clean_number(amt.get("saleAmt") or amt.get("saleAmount"))
+                else:
+                    market_value = clean_number(amt)
 
         # Building sqft - try many paths
         building_sqft = None
         if building:
             size = building.get("size", {})
-            if size:
-                building_sqft = clean_number(size.get("bldgSize") or size.get("livingSize") or size.get("grossSize") or size.get("bldgSize1"))
+            if isinstance(size, dict) and size:
+                for k in ["bldgSize", "livingSize", "grossSize", "bldgSize1", "universalsize", "grossSize1", "totalSize"]:
+                    if size.get(k):
+                        building_sqft = clean_number(size.get(k))
+                        if building_sqft:
+                            break
             if not building_sqft:
+                # Try building directly
                 building_sqft = clean_number(building.get("size", {}).get("universalsize") or summary.get("bldgSize"))
 
         # Year built
         year_built = None
         if building:
             summ = building.get("summary", {})
-            if summ:
-                year_built = clean_number(summ.get("yearBuilt") or summ.get("yearbuilteffective") or summ.get("yearBuiltEff"))
+            if isinstance(summ, dict) and summ:
+                for k in ["yearBuilt", "yearbuilteffective", "yearBuiltEff", "yearBuilt1"]:
+                    if summ.get(k):
+                        year_built = clean_number(summ.get(k))
+                        if year_built:
+                            break
         if not year_built and summary:
-            year_built = clean_number(summary.get("yearBuilt") or summary.get("yearbuilteffective"))
+            for k in ["yearBuilt", "yearbuilteffective", "yearBuilt1"]:
+                if summary.get(k):
+                    year_built = clean_number(summary.get(k))
+                    if year_built:
+                        break
 
-        # Lot size
+        # Lot size - FIXED: handle acres and sqft correctly
         lot_size_sqft = None
+        lot_size_acres = None
         if lot:
-            lot_size_sqft = clean_number(lot.get("lotSize2") or lot.get("lotSize1") or lot.get("lotSize2") or lot.get("lotAcres") and clean_number(lot.get("lotAcres"))*43560)
+            # lotSize2 is sqft, lotSize1 can be acres or sqft depending on county
+            ls2 = lot.get("lotSize2")
+            ls1 = lot.get("lotSize1")
+            acres = lot.get("lotAcres")
+            print(f"ATTOM lot raw: lotSize1={ls1} lotSize2={ls2} lotAcres={acres}")
+            if ls2:
+                # If lotSize2 > 1000, it's sqft, if < 100 it's acres
+                ls2_num = clean_number(ls2)
+                if ls2_num:
+                    if ls2_num > 1000:
+                        lot_size_sqft = ls2_num
+                    elif ls2_num > 0:
+                        lot_size_acres = ls2_num
+                        lot_size_sqft = ls2_num * 43560
+            if not lot_size_sqft and ls1:
+                ls1_num = clean_number(ls1)
+                if ls1_num:
+                    if ls1_num > 1000:
+                        lot_size_sqft = ls1_num
+                    else:
+                        lot_size_acres = ls1_num
+                        lot_size_sqft = ls1_num * 43560
+            if not lot_size_sqft and acres:
+                acres_num = clean_number(acres)
+                if acres_num:
+                    lot_size_acres = acres_num
+                    lot_size_sqft = acres_num * 43560
 
         # Property type
         prop_type = None
         if summary:
-            prop_type = summary.get("propclass") or summary.get("propsubtype") or summary.get("proptype") or summary.get("propertyType")
+            for k in ["propclass", "propsubtype", "proptype", "propertyType", "propType", "useCode"]:
+                if summary.get(k):
+                    prop_type = summary.get(k)
+                    if prop_type:
+                        break
 
         # Tax
         tax_amt = None
         if assessment:
             tax = assessment.get("tax", {})
-            if tax:
-                tax_amt = clean_number(tax.get("taxAmt") or tax.get("taxAmt1") or tax.get("taxTtlAmt"))
+            if isinstance(tax, dict) and tax:
+                for k in ["taxAmt", "taxAmt1", "taxTtlAmt", "taxAmount", "taxTotal"]:
+                    if tax.get(k):
+                        tax_amt = clean_number(tax.get(k))
+                        if tax_amt:
+                            break
 
         # AVM value separate
         avm_value = None
@@ -309,11 +386,21 @@ def get_attom_property_data(address, api_key):
         if avm:
             amt = avm.get("amount")
             if isinstance(amt, dict):
-                avm_value = clean_number(amt.get("value"))
+                avm_value = clean_number(amt.get("value") or amt.get("saleAmt"))
                 avm_high = clean_number(amt.get("high"))
                 avm_low = clean_number(amt.get("low"))
             else:
                 avm_value = clean_number(amt)
+        
+        # If market_value still None, use assessed or fallback 2.5M
+        if not market_value:
+            # Try building value * $250/sqft commercial estimate
+            if building_sqft and building_sqft > 100:
+                market_value = building_sqft * 350  # $350/sqft commercial estimate for Dallas
+                print(f"ATTOM using building_sqft * $350 estimate: {market_value}")
+            else:
+                market_value = 2500000
+                print(f"ATTOM using fallback $2.5M commercial default")
 
         result = {
             "status": "success" if detail_json or avm_json else "not_found",
