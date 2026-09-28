@@ -66,67 +66,229 @@ def get_bill_url(bill_data):
 
 def get_attom_property_data(address, api_key):
     """
-    ATTOM API: property/detail + property/valuation + property/risk
+    ATTOM API v2 - with 3 fallback endpoints + debug logging
     Returns dict with value, avm, taxes, lot, building, risk
     """
-    if not api_key or not address:
-        return {"status": "missing_key_or_address", "data": {}}
+    print(f"\n==== ATTOM DEBUG ====")
+    print(f"Address input: {address}")
+    print(f"API Key present: {bool(api_key)} length: {len(api_key) if api_key else 0}")
     
+    if not api_key or not address:
+        print("ATTOM: missing key or address")
+        return {"status": "missing_key_or_address", "full_address": address, "market_value": None, "building_sqft": None, "lot_size_sqft": None, "avm_value": None, "year_built": None, "property_type": None}
+
     try:
-        # ATTOM requires address parsing
-        # Use ATTOM property address endpoint
         headers = {"apikey": api_key, "Accept": "application/json"}
         
-        # Step 1: Basic property detail
-        url_detail = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detail"
-        params = {"address1": address.split(",")[0].strip(), "address2": ",".join(address.split(",")[1:]).strip() if "," in address else ""}
+        # Parse address properly for ATTOM
+        # ATTOM wants address1 = street, address2 = city, state zip
+        parts = [p.strip() for p in address.split(",")]
+        if len(parts) >= 3:
+            address1 = parts[0]
+            address2 = ", ".join(parts[1:])
+        elif len(parts) == 2:
+            address1 = parts[0]
+            address2 = parts[1]
+        else:
+            address1 = address
+            address2 = ""
         
-        resp_detail = requests.get(url_detail, headers=headers, params=params, timeout=20)
+        print(f"ATTOM parsed address1: '{address1}' address2: '{address2}'")
+
         detail_json = {}
-        if resp_detail.status_code == 200:
-            j = resp_detail.json()
-            if j.get("property"):
-                detail_json = j["property"][0] if isinstance(j["property"], list) else j["property"]
-        
-        # Step 2: AVM
-        url_avm = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detailavm"
-        resp_avm = requests.get(url_avm, headers=headers, params=params, timeout=20)
         avm_json = {}
-        if resp_avm.status_code == 200:
-            j = resp_avm.json()
-            if j.get("property"):
-                avm_json = j["property"][0] if isinstance(j["property"], list) else j["property"]
-        
-        # Extract key fields with fallbacks
-        assessment = detail_json.get("assessment", {})
-        building = detail_json.get("building", {})
-        lot = detail_json.get("lot", {})
+        attom_id = None
+
+        # TRY 1: property/address -> get attomId then detail
+        try:
+            url_addr = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/address"
+            params = {"address1": address1, "address2": address2}
+            print(f"ATTOM Try 1: {url_addr} params={params}")
+            r = requests.get(url_addr, headers=headers, params=params, timeout=20)
+            print(f"ATTOM Try 1 status: {r.status_code}")
+            if r.status_code == 200:
+                j = r.json()
+                print(f"ATTOM Try 1 response keys: {list(j.keys())[:5]}")
+                if j.get("property") and len(j["property"]) > 0:
+                    first = j["property"][0]
+                    attom_id = first.get("identifier", {}).get("attomId") or first.get("identifier", {}).get("Id")
+                    detail_json = first
+                    print(f"ATTOM Try 1 found attomId: {attom_id}")
+        except Exception as e:
+            print(f"ATTOM Try 1 error: {e}")
+
+        # TRY 2: property/detail with address
+        if not detail_json:
+            try:
+                url_detail = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detail"
+                params = {"address1": address1, "address2": address2}
+                print(f"ATTOM Try 2: {url_detail}")
+                r = requests.get(url_detail, headers=headers, params=params, timeout=20)
+                print(f"ATTOM Try 2 status: {r.status_code} body: {r.text[:500]}")
+                if r.status_code == 200:
+                    j = r.json()
+                    if j.get("property") and len(j["property"]) > 0:
+                        detail_json = j["property"][0]
+                        print(f"ATTOM Try 2 found property")
+            except Exception as e:
+                print(f"ATTOM Try 2 error: {e}")
+
+        # TRY 3: property/basicprofile
+        if not detail_json:
+            try:
+                url_basic = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/basicprofile"
+                params = {"address1": address1, "address2": address2}
+                print(f"ATTOM Try 3: {url_basic}")
+                r = requests.get(url_basic, headers=headers, params=params, timeout=20)
+                print(f"ATTOM Try 3 status: {r.status_code}")
+                if r.status_code == 200:
+                    j = r.json()
+                    if j.get("property") and len(j["property"]) > 0:
+                        detail_json = j["property"][0]
+                        print(f"ATTOM Try 3 found property")
+            except Exception as e:
+                print(f"ATTOM Try 3 error: {e}")
+
+        # TRY 4: If we have attomId, get detailavm and detail with attomId
+        if attom_id:
+            try:
+                url_avm_id = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detailavm"
+                params = {"attomid": attom_id}
+                print(f"ATTOM Try 4 AVM by attomId: {attom_id}")
+                r = requests.get(url_avm_id, headers=headers, params=params, timeout=20)
+                print(f"ATTOM Try 4 AVM status: {r.status_code}")
+                if r.status_code == 200:
+                    j = r.json()
+                    if j.get("property") and len(j["property"]) > 0:
+                        avm_json = j["property"][0]
+                        print(f"ATTOM Try 4 AVM found")
+            except Exception as e:
+                print(f"ATTOM Try 4 AVM error: {e}")
+
+        # TRY 5: AVM by address if no attomId
+        if not avm_json:
+            try:
+                url_avm = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detailavm"
+                params = {"address1": address1, "address2": address2}
+                print(f"ATTOM Try 5 AVM by address")
+                r = requests.get(url_avm, headers=headers, params=params, timeout=20)
+                print(f"ATTOM Try 5 AVM status: {r.status_code} body: {r.text[:500]}")
+                if r.status_code == 200:
+                    j = r.json()
+                    if j.get("property") and len(j["property"]) > 0:
+                        avm_json = j["property"][0]
+            except Exception as e:
+                print(f"ATTOM Try 5 AVM error: {e}")
+
+        print(f"ATTOM detail_json empty? {not bool(detail_json)} avm_json empty? {not bool(avm_json)}")
+        if detail_json:
+            print(f"ATTOM detail keys: {list(detail_json.keys())[:10]}")
+
+        # Extract with ALL possible paths (ATTOM structure varies)
+        assessment = detail_json.get("assessment", {}) if detail_json else {}
+        building = detail_json.get("building", {}) if detail_json else {}
+        lot = detail_json.get("lot", {}) if detail_json else {}
+        summary = detail_json.get("summary", {}) if detail_json else {}
         avm = avm_json.get("avm", {}) if avm_json else {}
+
+        # Market value - try many paths
+        market_value = None
+        # Try AVM first
+        if avm:
+            amt = avm.get("amount")
+            if isinstance(amt, dict):
+                market_value = clean_number(amt.get("value") or amt.get("saleAmt") or amt.get("amount"))
+            else:
+                market_value = clean_number(amt)
         
-        market_value = clean_number(avm.get("amount", {}).get("value") if isinstance(avm.get("amount"), dict) else avm.get("amount")) \
-                       or clean_number(assessment.get("market", {}).get("mktTtlValue")) \
-                       or clean_number(assessment.get("assessed", {}).get("assdTtlValue"))
+        # Try assessment
+        if not market_value and assessment:
+            mkt = assessment.get("market", {})
+            if mkt:
+                market_value = clean_number(mkt.get("mktTtlValue") or mkt.get("mktLandValue") or mkt.get("mktApprTtlValue"))
         
+        # Try assessed
+        if not market_value and assessment:
+            assd = assessment.get("assessed", {})
+            if assd:
+                market_value = clean_number(assd.get("assdTtlValue") or assd.get("assdMktTtlValue"))
+
+        # Building sqft - try many paths
+        building_sqft = None
+        if building:
+            size = building.get("size", {})
+            if size:
+                building_sqft = clean_number(size.get("bldgSize") or size.get("livingSize") or size.get("grossSize") or size.get("bldgSize1"))
+            if not building_sqft:
+                building_sqft = clean_number(building.get("size", {}).get("universalsize") or summary.get("bldgSize"))
+
+        # Year built
+        year_built = None
+        if building:
+            summ = building.get("summary", {})
+            if summ:
+                year_built = clean_number(summ.get("yearBuilt") or summ.get("yearbuilteffective") or summ.get("yearBuiltEff"))
+        if not year_built and summary:
+            year_built = clean_number(summary.get("yearBuilt") or summary.get("yearbuilteffective"))
+
+        # Lot size
+        lot_size_sqft = None
+        if lot:
+            lot_size_sqft = clean_number(lot.get("lotSize2") or lot.get("lotSize1") or lot.get("lotSize2") or lot.get("lotAcres") and clean_number(lot.get("lotAcres"))*43560)
+
+        # Property type
+        prop_type = None
+        if summary:
+            prop_type = summary.get("propclass") or summary.get("propsubtype") or summary.get("proptype") or summary.get("propertyType")
+
+        # Tax
+        tax_amt = None
+        if assessment:
+            tax = assessment.get("tax", {})
+            if tax:
+                tax_amt = clean_number(tax.get("taxAmt") or tax.get("taxAmt1") or tax.get("taxTtlAmt"))
+
+        # AVM value separate
+        avm_value = None
+        avm_high = None
+        avm_low = None
+        if avm:
+            amt = avm.get("amount")
+            if isinstance(amt, dict):
+                avm_value = clean_number(amt.get("value"))
+                avm_high = clean_number(amt.get("high"))
+                avm_low = clean_number(amt.get("low"))
+            else:
+                avm_value = clean_number(amt)
+
         result = {
-            "status": "success" if detail_json else "not_found",
+            "status": "success" if detail_json or avm_json else "not_found",
             "full_address": address,
             "market_value": market_value,
-            "assessed_value": clean_number(assessment.get("assessed", {}).get("assdTtlValue")),
-            "market_total_value": clean_number(assessment.get("market", {}).get("mktTtlValue")),
-            "building_sqft": clean_number(building.get("size", {}).get("bldgSize") or building.get("size", {}).get("livingSize")),
-            "year_built": clean_number(building.get("summary", {}).get("yearBuilt") or building.get("summary", {}).get("yearbuilteffective")),
-            "property_type": detail_json.get("summary", {}).get("propclass") or detail_json.get("summary", {}).get("propsubtype"),
-            "lot_size_sqft": clean_number(lot.get("lotSize2") or lot.get("lotSize1")),
-            "tax_amount": clean_number(assessment.get("tax", {}).get("taxAmt") or assessment.get("tax", {}).get("taxAmt1")),
-            "avm_value": clean_number(avm.get("amount", {}).get("value") if isinstance(avm.get("amount"), dict) else None) if avm else None,
-            "avm_high": clean_number(avm.get("amount", {}).get("high") if isinstance(avm.get("amount"), dict) else None) if avm else None,
-            "avm_low": clean_number(avm.get("amount", {}).get("low") if isinstance(avm.get("amount"), dict) else None) if avm else None,
+            "assessed_value": clean_number(assessment.get("assessed", {}).get("assdTtlValue")) if assessment else None,
+            "market_total_value": clean_number(assessment.get("market", {}).get("mktTtlValue")) if assessment else None,
+            "building_sqft": building_sqft,
+            "year_built": year_built,
+            "property_type": prop_type,
+            "lot_size_sqft": lot_size_sqft,
+            "tax_amount": tax_amt,
+            "avm_value": avm_value or market_value,
+            "avm_high": avm_high,
+            "avm_low": avm_low,
+            "attom_id": attom_id,
             "raw_detail": detail_json,
             "raw_avm": avm_json
         }
+        
+        print(f"ATTOM FINAL result: market_value={result['market_value']} building_sqft={result['building_sqft']} lot={result['lot_size_sqft']} avm={result['avm_value']} year={result['year_built']} type={result['property_type']}")
         return result
+
     except Exception as e:
-        return {"status": "error", "error": str(e), "data": {}}
+        print(f"ATTOM FATAL ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "error": str(e), "full_address": address, "market_value": None, "building_sqft": None, "lot_size_sqft": None, "avm_value": None, "year_built": None, "property_type": None}
+
 
 def calculate_loan_payment(principal, annual_rate, term_years):
     """Monthly payment amortized"""
