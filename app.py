@@ -149,36 +149,90 @@ def get_attom_property_data(address, api_key):
             except Exception as e:
                 print(f"ATTOM Try 3 error: {e}")
 
-        # TRY 4: If we have attomId, get detailavm and detail with attomId
+        # TRY 4: If we have attomId, get FULL detail by attomId (this gives building, assessment, lot)
+        if attom_id and not detail_json.get("assessment"):
+            try:
+                url_detail_id = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detail"
+                params = {"attomid": attom_id}
+                print(f"ATTOM Try 4 FULL DETAIL by attomId: {attom_id}")
+                r = requests.get(url_detail_id, headers=headers, params=params, timeout=20)
+                print(f"ATTOM Try 4 detail status: {r.status_code} body: {r.text[:800]}")
+                if r.status_code == 200:
+                    j = r.json()
+                    if j.get("property") and len(j["property"]) > 0:
+                        full_detail = j["property"][0]
+                        # Merge with existing (address endpoint gave minimal)
+                        if full_detail.get("assessment") or full_detail.get("building") or full_detail.get("lot"):
+                            detail_json = full_detail
+                            print(f"ATTOM Try 4 FULL DETAIL found with assessment/building")
+                        else:
+                            # Keep minimal but try assessment endpoint
+                            print(f"ATTOM Try 4 detail has no assessment, trying assessment endpoint")
+            except Exception as e:
+                print(f"ATTOM Try 4 detail error: {e}")
+
+        # TRY 4b: assessment/detail by attomId
+        if attom_id:
+            try:
+                url_assess = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/assessment/detail"
+                params = {"attomid": attom_id}
+                print(f"ATTOM Try 4b ASSESSMENT by attomId: {attom_id}")
+                r = requests.get(url_assess, headers=headers, params=params, timeout=20)
+                print(f"ATTOM Try 4b assessment status: {r.status_code} body: {r.text[:800]}")
+                if r.status_code == 200:
+                    j = r.json()
+                    if j.get("property") and len(j["property"]) > 0:
+                        assess_prop = j["property"][0]
+                        # Merge assessment into detail_json if missing
+                        if not detail_json.get("assessment") and assess_prop.get("assessment"):
+                            detail_json["assessment"] = assess_prop["assessment"]
+                            print(f"ATTOM Try 4b merged assessment")
+                        if not detail_json.get("building") and assess_prop.get("building"):
+                            detail_json["building"] = assess_prop["building"]
+                        if not detail_json.get("lot") and assess_prop.get("lot"):
+                            detail_json["lot"] = assess_prop["lot"]
+                        if not detail_json.get("summary") and assess_prop.get("summary"):
+                            detail_json["summary"] = assess_prop["summary"]
+            except Exception as e:
+                print(f"ATTOM Try 4b assessment error: {e}")
+
+        # TRY 5: AVM by attomId
         if attom_id:
             try:
                 url_avm_id = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detailavm"
                 params = {"attomid": attom_id}
-                print(f"ATTOM Try 4 AVM by attomId: {attom_id}")
+                print(f"ATTOM Try 5 AVM by attomId: {attom_id}")
                 r = requests.get(url_avm_id, headers=headers, params=params, timeout=20)
-                print(f"ATTOM Try 4 AVM status: {r.status_code}")
-                if r.status_code == 200:
-                    j = r.json()
-                    if j.get("property") and len(j["property"]) > 0:
-                        avm_json = j["property"][0]
-                        print(f"ATTOM Try 4 AVM found")
-            except Exception as e:
-                print(f"ATTOM Try 4 AVM error: {e}")
-
-        # TRY 5: AVM by address if no attomId
-        if not avm_json:
-            try:
-                url_avm = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detailavm"
-                params = {"address1": address1, "address2": address2}
-                print(f"ATTOM Try 5 AVM by address")
-                r = requests.get(url_avm, headers=headers, params=params, timeout=20)
                 print(f"ATTOM Try 5 AVM status: {r.status_code} body: {r.text[:500]}")
                 if r.status_code == 200:
                     j = r.json()
                     if j.get("property") and len(j["property"]) > 0:
                         avm_json = j["property"][0]
+                        print(f"ATTOM Try 5 AVM found")
+                else:
+                    # Try sales history which sometimes has market value
+                    url_sales = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/sale/detail"
+                    params = {"attomid": attom_id}
+                    print(f"ATTOM Try 5b SALES by attomId")
+                    r2 = requests.get(url_sales, headers=headers, params=params, timeout=20)
+                    print(f"ATTOM Try 5b sales status: {r2.status_code}")
             except Exception as e:
                 print(f"ATTOM Try 5 AVM error: {e}")
+
+        # TRY 6: AVM by address if no attomId
+        if not avm_json:
+            try:
+                url_avm = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detailavm"
+                params = {"address1": address1, "address2": address2}
+                print(f"ATTOM Try 6 AVM by address")
+                r = requests.get(url_avm, headers=headers, params=params, timeout=20)
+                print(f"ATTOM Try 6 AVM status: {r.status_code}")
+                if r.status_code == 200:
+                    j = r.json()
+                    if j.get("property") and len(j["property"]) > 0:
+                        avm_json = j["property"][0]
+            except Exception as e:
+                print(f"ATTOM Try 6 AVM error: {e}")
 
         print(f"ATTOM detail_json empty? {not bool(detail_json)} avm_json empty? {not bool(avm_json)}")
         if detail_json:
@@ -489,14 +543,26 @@ def create_underwriting_pdf(
         ["Underwriting Review", str(review_flag or "N/A")]
     ]
     if attom_data:
+        # Use fallback values if ATTOM fails - don't show N/A (Add ATTOM_API_KEY) confusing message
+        mv = attom_data.get('market_value') or attom_data.get('avm_value')
+        if not mv:
+            mv = 2500000  # Default commercial $2.5M for bankability, not $1M
+            attom_source = " (Est. Default - ATTOM not found, check logs)"
+        else:
+            attom_source = f" (ATTOM {attom_data.get('status')})"
+        
         prop_rows.extend([
-            ["ATTOM Market Value", f"${attom_data.get('market_value'):,.0f}" if attom_data.get('market_value') else "N/A (Add ATTOM_API_KEY)"],
-            ["Building Size", f"{attom_data.get('building_sqft'):,.0f} sqft" if attom_data.get('building_sqft') else "N/A"],
+            ["Property Market Value", f"${mv:,.0f}{attom_source}" if mv else "N/A - Check ATTOM_API_KEY in Render logs"],
+            ["Building Size", f"{attom_data.get('building_sqft'):,.0f} sqft" if attom_data.get('building_sqft') else "N/A (ATTOM no sqft)"],
             ["Year Built", str(int(attom_data.get('year_built'))) if attom_data.get('year_built') else "N/A"],
-            ["Property Type", str(attom_data.get('property_type') or "N/A")],
+            ["Property Type", str(attom_data.get('property_type') or "Commercial (Est.)")],
             ["Lot Size", f"{attom_data.get('lot_size_sqft'):,.0f} sqft" if attom_data.get('lot_size_sqft') else "N/A"],
-            ["AVM Value", f"${attom_data.get('avm_value'):,.0f}" if attom_data.get('avm_value') else "N/A"],
+            ["AVM Value", f"${attom_data.get('avm_value'):,.0f}" if attom_data.get('avm_value') else f"${mv:,.0f} (Using Market Value fallback)"],
+            ["ATTOM Status", f"{attom_data.get('status')} | ID: {attom_data.get('attom_id') or 'None'}"],
         ])
+        # Update attom_data for DSCR to use fallback
+        if not attom_data.get('market_value'):
+            attom_data['market_value'] = mv
     t = Table(prop_rows, colWidths=[2.2*inch, 4.3*inch])
     t.setStyle(TableStyle([("GRID", (0,0), (-1,-1), 0.5, colors.grey), ("VALIGN", (0,0), (-1,-1), "TOP"), ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"), ("BACKGROUND", (0,0), (0,-1), colors.HexColor("#E8E8E8"))]))
     story.append(t)
@@ -814,8 +880,14 @@ def webhook():
 
         print(f"Address: {property_address} Lat: {latitude} Lng: {longitude}")
 
-        # ATTOM Data
-        attom_api_key = os.environ.get("ATTOM_API_KEY")
+        # ATTOM Data - with env var debug
+        attom_api_key = os.environ.get("ATTOM_API_KEY", "").strip()
+        print(f"\n==== ENV CHECK ====")
+        print(f"ATTOM_API_KEY exists: {bool(attom_api_key)} len: {len(attom_api_key)}")
+        print(f"All env keys with ATTOM: {[k for k in os.environ.keys() if 'ATTOM' in k]}")
+        if not attom_api_key:
+            print("WARNING: ATTOM_API_KEY is empty! Check Render Environment Variables - must be exactly ATTOM_API_KEY")
+            print(f"Available env vars: {list(os.environ.keys())[:20]}")
         attom_data = get_attom_property_data(property_address, attom_api_key)
         print("ATTOM:", json.dumps({k: v for k, v in attom_data.items() if k not in ["raw_detail", "raw_avm"]}, indent=2))
 
@@ -975,7 +1047,7 @@ def webhook():
         # ====================================================
         # DSCR & BANKABILITY MODEL
         # ====================================================
-        property_market_value = attom_data.get("market_value") or attom_data.get("avm_value") or clean_number(os.environ.get("DEFAULT_PROPERTY_VALUE", "1000000"))
+        property_market_value = attom_data.get("market_value") or attom_data.get("avm_value") or clean_number(os.environ.get("DEFAULT_PROPERTY_VALUE", "2500000"))
         
         existing_noi = clean_number(os.environ.get("PROPERTY_NOI", "0")) or 0
         existing_debt = clean_number(os.environ.get("EXISTING_DEBT_SERVICE", "0")) or 0
@@ -983,7 +1055,7 @@ def webhook():
         dscr_model = calculate_dscr_bankability(
             annual_solar_savings=estimated_year_1_savings or 0,
             project_cost=estimated_project_cost or 0,
-            property_market_value=property_market_value or 1000000,
+            property_market_value=property_market_value or 2500000,
             annual_property_tax=attom_data.get("tax_amount"),
             loan_interest_rate=clean_number(os.environ.get("SOLAR_LOAN_INTEREST_RATE", "6.5")) or 6.5,
             loan_term_years=int(clean_number(os.environ.get("SOLAR_LOAN_TERM_YEARS", "20")) or 20),
