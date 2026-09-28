@@ -5,46 +5,22 @@ import json
 import requests
 import tempfile
 import re
-import traceback
+import math
+from datetime import datetime
 
 import cloudinary
 import cloudinary.uploader
 
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    Table,
-    TableStyle
-)
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 
 
-# ============================================================
-# CONFIG
-# ============================================================
-
 app = Flask(__name__)
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-ATTOM_API_KEY = os.environ.get("ATTOM_API_KEY")
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-PVWATTS_API_KEY = os.environ.get("PVWATTS_API_KEY", "DEMO_KEY")
-
-GHL_API_TOKEN = os.environ.get("GHL_API_TOKEN")
-GHL_LOCATION_ID = os.environ.get("GHL_LOCATION_ID")
-
-# Change these to your actual GHL custom field IDs.
-GHL_PDF_URL_FIELD = os.environ.get("GHL_PDF_URL_FIELD")
-GHL_REPORT_URL_FIELD = os.environ.get("GHL_REPORT_URL_FIELD")
-GHL_STATUS_FIELD = os.environ.get("GHL_STATUS_FIELD")
-
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1")
-
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 cloudinary.config(
     cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
@@ -52,1648 +28,988 @@ cloudinary.config(
     api_secret=os.environ.get("CLOUDINARY_API_SECRET")
 )
 
-
 # ============================================================
-# BASIC HELPERS
+# HELPER FUNCTIONS
 # ============================================================
 
 def clean_number(value):
     if value is None:
         return None
-
     text = str(value).strip()
-
     if not text:
         return None
-
-    text = (
-        text.replace(",", "")
-        .replace("$", "")
-        .replace("%", "")
-    )
-
+    text = text.replace(",", "").replace("$", "").replace("%", "")
     match = re.search(r"-?\d+(?:\.\d+)?", text)
-
     if not match:
         return None
-
     try:
         return float(match.group(0))
     except ValueError:
         return None
 
-
-def parse_ai_json(text):
-    if not text:
-        return {}
-
-    text = text.strip()
-
-    text = re.sub(
-        r"^```(?:json)?",
-        "",
-        text,
-        flags=re.IGNORECASE
-    )
-
-    text = re.sub(r"```$", "", text).strip()
-
-    start = text.find("{")
-    end = text.rfind("}")
-
-    if start >= 0 and end >= 0:
-        text = text[start:end + 1]
-
-    try:
-        return json.loads(text)
-    except Exception:
-        return {}
-
-
-def log(message, data=None):
-    print("\n" + "=" * 70)
-    print(message)
-
-    if data is not None:
-        try:
-            print(json.dumps(data, indent=2, default=str)[:12000])
-        except Exception:
-            print(str(data))
-
-    print("=" * 70)
-
-
-# ============================================================
-# GHL BILL URL EXTRACTION
-# ============================================================
-
 def get_bill_url(bill_data):
-
-    """
-    Handles common GHL file-field formats.
-    """
-
-    if not bill_data:
-        return None
-
     if isinstance(bill_data, str):
-
-        # Sometimes a field contains JSON as a string.
-        try:
-            parsed = json.loads(bill_data)
-            if parsed != bill_data:
-                return get_bill_url(parsed)
-        except Exception:
-            pass
-
-        if bill_data.startswith("http"):
-            return bill_data
-
-        return None
-
-    if isinstance(bill_data, list):
-
-        for item in bill_data:
-            url = get_bill_url(item)
-
-            if url:
-                return url
-
-        return None
-
+        return bill_data
+    if isinstance(bill_data, list) and len(bill_data) > 0:
+        first_bill = bill_data[0]
+        if isinstance(first_bill, str):
+            return first_bill
+        if isinstance(first_bill, dict):
+            return first_bill.get("url") or first_bill.get("fileUrl") or first_bill.get("file_url") or first_bill.get("downloadUrl")
     if isinstance(bill_data, dict):
-
-        possible_keys = [
-            "url",
-            "fileUrl",
-            "file_url",
-            "downloadUrl",
-            "download_url",
-            "link",
-            "href",
-            "value"
-        ]
-
-        for key in possible_keys:
-
-            value = bill_data.get(key)
-
-            if isinstance(value, str) and value.startswith("http"):
-                return value
-
-        # Sometimes nested under "files"
-        for key in ["files", "file", "attachments", "data"]:
-
-            if key in bill_data:
-
-                url = get_bill_url(bill_data[key])
-
-                if url:
-                    return url
-
+        return bill_data.get("url") or bill_data.get("fileUrl") or bill_data.get("file_url") or bill_data.get("downloadUrl")
     return None
 
+# ============================================================
+# ATTOM DATA + DSCR + BANKABILITY MODULE
+# ============================================================
 
-def recursively_find_file_url(obj):
-
+def get_attom_property_data(address, api_key):
     """
-    Last-resort recursive search through the entire GHL webhook payload.
+    ATTOM API: property/detail + property/valuation + property/risk
+    Returns dict with value, avm, taxes, lot, building, risk
     """
-
-    if isinstance(obj, str):
-
-        if obj.startswith("http") and (
-            ".pdf" in obj.lower()
-            or "file" in obj.lower()
-            or "upload" in obj.lower()
-            or "cloudinary" in obj.lower()
-        ):
-            return obj
-
-        return None
-
-    if isinstance(obj, list):
-
-        for item in obj:
-
-            result = recursively_find_file_url(item)
-
-            if result:
-                return result
-
-    if isinstance(obj, dict):
-
-        # Prioritize obvious bill/file fields first.
-        for key, value in obj.items():
-
-            key_lower = str(key).lower()
-
-            if any(word in key_lower for word in [
-                "bill",
-                "utility",
-                "upload",
-                "file",
-                "attachment"
-            ]):
-
-                result = get_bill_url(value)
-
-                if result:
-                    return result
-
-        # Then search everything.
-        for value in obj.values():
-
-            result = recursively_find_file_url(value)
-
-            if result:
-                return result
-
-    return None
-
-
-def extract_contact_id(payload):
-
-    possible_paths = [
-        payload.get("contact_id"),
-        payload.get("contactId"),
-        payload.get("id")
-    ]
-
-    contact = payload.get("contact")
-
-    if isinstance(contact, dict):
-        possible_paths.extend([
-            contact.get("id"),
-            contact.get("contactId")
-        ])
-
-    for value in possible_paths:
-
-        if value:
-            return value
-
-    return None
-
-
-# ============================================================
-# DOWNLOAD BILL
-# ============================================================
-
-def download_file(url):
-
-    log("DOWNLOADING UTILITY BILL", {
-        "url": url
-    })
-
-    headers = {
-        "User-Agent": "MHoldings-Commercial-Solar-Underwriting/1.0"
-    }
-
-    response = requests.get(
-        url,
-        headers=headers,
-        timeout=60,
-        allow_redirects=True
-    )
-
-    log("BILL DOWNLOAD RESPONSE", {
-        "status_code": response.status_code,
-        "content_type": response.headers.get("Content-Type"),
-        "bytes": len(response.content),
-        "final_url": response.url
-    })
-
-    response.raise_for_status()
-
-    if not response.content:
-        raise Exception("Downloaded utility bill is empty.")
-
-    # Basic PDF validation.
-    if not response.content.startswith(b"%PDF"):
-        content_type = response.headers.get("Content-Type", "")
-
-        if "pdf" not in content_type.lower():
-            raise Exception(
-                "The GHL file URL did not return a PDF."
-            )
-
-    temp = tempfile.NamedTemporaryFile(
-        delete=False,
-        suffix=".pdf"
-    )
-
-    temp.write(response.content)
-    temp.close()
-
-    return temp.name
-
-
-# ============================================================
-# OPENAI PDF EXTRACTION
-# ============================================================
-
-def extract_utility_bill(pdf_path):
-
-    log("UPLOADING BILL TO OPENAI")
-
-    with open(pdf_path, "rb") as file:
-
-        uploaded_file = client.files.create(
-            file=file,
-            purpose="user_data"
-        )
-
-    log("OPENAI FILE CREATED", {
-        "file_id": uploaded_file.id,
-        "filename": uploaded_file.filename
-    })
-
-    prompt = """
-You are extracting data from a commercial electricity utility bill.
-
-Read the PDF carefully.
-
-Return ONLY valid JSON.
-
-Do not guess.
-If a value cannot be found, return null.
-
-Use this exact structure:
-
-{
-  "utility_provider": null,
-  "account_number": null,
-  "service_address": null,
-  "billing_start_date": null,
-  "billing_end_date": null,
-  "annual_kwh": null,
-  "billing_period_kwh": null,
-  "peak_kw": null,
-  "electric_rate_per_kwh": null,
-  "total_bill_amount": null,
-  "demand_charge": null,
-  "energy_charge": null,
-  "customer_name": null,
-  "city": null,
-  "state": null,
-  "zip": null
-}
-
-Important:
-- annual_kwh should only be populated if the bill explicitly provides annual usage.
-- billing_period_kwh should be the actual kWh for the billing period.
-- peak_kw should be the actual peak demand if present.
-- electric_rate_per_kwh should be the effective or stated electricity rate if available.
-- service_address should be the property's service address.
-"""
-
-    response = client.responses.create(
-        model=OPENAI_MODEL,
-        input=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": prompt
-                    },
-                    {
-                        "type": "input_file",
-                        "file_id": uploaded_file.id
-                    }
-                ]
-            }
-        ]
-    )
-
-    raw_text = response.output_text
-
-    log("OPENAI BILL EXTRACTION", {
-        "raw_response": raw_text
-    })
-
-    data = parse_ai_json(raw_text)
-
-    if not data:
-        raise Exception(
-            "OpenAI returned no usable JSON from the utility bill."
-        )
-
-    return data
-
-
-# ============================================================
-# GOOGLE GEOCODING
-# ============================================================
-
-def geocode_address(address):
-
-    if not GOOGLE_API_KEY or not address:
-        return {
-            "latitude": None,
-            "longitude": None,
-            "formatted_address": address
-        }
-
-    url = "https://maps.googleapis.com/maps/api/geocode/json"
-
-    params = {
-        "address": address,
-        "key": GOOGLE_API_KEY
-    }
-
-    response = requests.get(
-        url,
-        params=params,
-        timeout=15
-    )
-
-    response.raise_for_status()
-
-    data = response.json()
-
-    if data.get("status") != "OK":
-        return {
-            "latitude": None,
-            "longitude": None,
-            "formatted_address": address
-        }
-
-    result = data["results"][0]
-
-    location = result["geometry"]["location"]
-
-    return {
-        "latitude": location["lat"],
-        "longitude": location["lng"],
-        "formatted_address": result.get(
-            "formatted_address",
-            address
-        )
-    }
-
-
-# ============================================================
-# PVWATTS
-# ============================================================
-
-def run_pvwatts(latitude, longitude, system_size_kw):
-
-    if latitude is None or longitude is None:
-        return {
-            "annual_solar_kwh": None,
-            "error": "Missing coordinates"
-        }
-
-    if system_size_kw is None or system_size_kw <= 0:
-        return {
-            "annual_solar_kwh": None,
-            "error": "Missing system size"
-        }
-
-    url = "https://developer.nrel.gov/api/pvwatts/v8.json"
-
-    params = {
-        "api_key": PVWATTS_API_KEY,
-        "azimuth": 180,
-        "dataset": "nsrdb",
-        "gcr": 0.4,
-        "inv_eff": 96,
-        "radius": 0,
-        "dc_ac_ratio": 1.2,
-        "tilt": 20,
-        "array_type": 1,
-        "module_type": 0,
-        "system_capacity": system_size_kw,
-        "losses": 14,
-        "lat": latitude,
-        "lon": longitude
-    }
-
-    response = requests.get(
-        url,
-        params=params,
-        timeout=30
-    )
-
-    response.raise_for_status()
-
-    data = response.json()
-
-    station = data.get("outputs", {})
-
-    ac_annual = station.get("ac_annual")
-
-    if isinstance(ac_annual, list):
-
-        annual = sum(ac_annual)
-
-    else:
-
-        annual = clean_number(ac_annual)
-
-    return {
-        "annual_solar_kwh": annual,
-        "raw": data
-    }
-
-
-# ============================================================
-# ATTOM PROPERTY DATA
-# ============================================================
-
-def fetch_attom_property_data(address):
-
-    if not ATTOM_API_KEY:
-
-        return {
-            "status": "NOT_CONFIGURED",
-            "owner": None,
-            "mortgage_amount": None
-        }
-
-    parts = [
-        part.strip()
-        for part in str(address).split(",")
-        if part.strip()
-    ]
-
-    address1 = parts[0] if parts else address
-
-    address2 = ", ".join(parts[1:]) if len(parts) > 1 else ""
-
-    url = (
-        "https://api.gateway.attomdata.com/"
-        "propertyapi/v1.0.0/property/detail"
-    )
-
-    headers = {
-        "Accept": "application/json",
-        "apikey": ATTOM_API_KEY
-    }
-
-    params = {
-        "address1": address1,
-        "address2": address2
-    }
-
+    if not api_key or not address:
+        return {"status": "missing_key_or_address", "data": {}}
+    
     try:
-
-        response = requests.get(
-            url,
-            headers=headers,
-            params=params,
-            timeout=20
-        )
-
-        log("ATTOM RESPONSE", {
-            "status_code": response.status_code
-        })
-
-        if response.status_code != 200:
-
-            return {
-                "status": "ERROR",
-                "owner": None,
-                "mortgage_amount": None,
-                "message": response.text[:500]
-            }
-
-        data = response.json()
-
-        properties = data.get("property", [])
-
-        if not properties:
-
-            return {
-                "status": "NO_MATCH",
-                "owner": None,
-                "mortgage_amount": None
-            }
-
-        property_data = properties[0]
-
-        assessment = property_data.get(
-            "assessment",
-            {}
-        )
-
-        owner = None
-
-        owner_data = assessment.get("owner")
-
-        if isinstance(owner_data, dict):
-
-            owner = (
-                owner_data.get("ownerName1")
-                or owner_data.get("ownerName2")
-            )
-
-        mortgage = property_data.get(
-            "mortgage",
-            {}
-        )
-
-        mortgage_amount = mortgage.get(
-            "totalFirstMortgageAmount"
-        )
-
-        return {
-            "status": "MATCHED",
-            "owner": owner,
-            "mortgage_amount": mortgage_amount,
-            "attom_id": (
-                property_data
-                .get("identifier", {})
-                .get("attomId")
-            )
+        # ATTOM requires address parsing
+        # Use ATTOM property address endpoint
+        headers = {"apikey": api_key, "Accept": "application/json"}
+        
+        # Step 1: Basic property detail
+        url_detail = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detail"
+        params = {"address1": address.split(",")[0].strip(), "address2": ",".join(address.split(",")[1:]).strip() if "," in address else ""}
+        
+        resp_detail = requests.get(url_detail, headers=headers, params=params, timeout=20)
+        detail_json = {}
+        if resp_detail.status_code == 200:
+            j = resp_detail.json()
+            if j.get("property"):
+                detail_json = j["property"][0] if isinstance(j["property"], list) else j["property"]
+        
+        # Step 2: AVM
+        url_avm = "https://api.gateway.attomdata.com/propertyapi/v1.0.0/property/detailavm"
+        resp_avm = requests.get(url_avm, headers=headers, params=params, timeout=20)
+        avm_json = {}
+        if resp_avm.status_code == 200:
+            j = resp_avm.json()
+            if j.get("property"):
+                avm_json = j["property"][0] if isinstance(j["property"], list) else j["property"]
+        
+        # Extract key fields with fallbacks
+        assessment = detail_json.get("assessment", {})
+        building = detail_json.get("building", {})
+        lot = detail_json.get("lot", {})
+        avm = avm_json.get("avm", {}) if avm_json else {}
+        
+        market_value = clean_number(avm.get("amount", {}).get("value") if isinstance(avm.get("amount"), dict) else avm.get("amount")) \
+                       or clean_number(assessment.get("market", {}).get("mktTtlValue")) \
+                       or clean_number(assessment.get("assessed", {}).get("assdTtlValue"))
+        
+        result = {
+            "status": "success" if detail_json else "not_found",
+            "full_address": address,
+            "market_value": market_value,
+            "assessed_value": clean_number(assessment.get("assessed", {}).get("assdTtlValue")),
+            "market_total_value": clean_number(assessment.get("market", {}).get("mktTtlValue")),
+            "building_sqft": clean_number(building.get("size", {}).get("bldgSize") or building.get("size", {}).get("livingSize")),
+            "year_built": clean_number(building.get("summary", {}).get("yearBuilt") or building.get("summary", {}).get("yearbuilteffective")),
+            "property_type": detail_json.get("summary", {}).get("propclass") or detail_json.get("summary", {}).get("propsubtype"),
+            "lot_size_sqft": clean_number(lot.get("lotSize2") or lot.get("lotSize1")),
+            "tax_amount": clean_number(assessment.get("tax", {}).get("taxAmt") or assessment.get("tax", {}).get("taxAmt1")),
+            "avm_value": clean_number(avm.get("amount", {}).get("value") if isinstance(avm.get("amount"), dict) else None) if avm else None,
+            "avm_high": clean_number(avm.get("amount", {}).get("high") if isinstance(avm.get("amount"), dict) else None) if avm else None,
+            "avm_low": clean_number(avm.get("amount", {}).get("low") if isinstance(avm.get("amount"), dict) else None) if avm else None,
+            "raw_detail": detail_json,
+            "raw_avm": avm_json
         }
-
+        return result
     except Exception as e:
+        return {"status": "error", "error": str(e), "data": {}}
 
-        log("ATTOM ERROR", str(e))
+def calculate_loan_payment(principal, annual_rate, term_years):
+    """Monthly payment amortized"""
+    if not principal or principal <= 0:
+        return 0
+    monthly_rate = annual_rate / 12 / 100
+    n = term_years * 12
+    if monthly_rate == 0:
+        return principal / n
+    payment = principal * (monthly_rate * (1 + monthly_rate)**n) / ((1 + monthly_rate)**n - 1)
+    return payment
 
-        return {
-            "status": "ERROR",
-            "owner": None,
-            "mortgage_amount": None
-        }
+def calculate_dscr_bankability(
+    annual_solar_savings,
+    project_cost,
+    property_market_value,
+    annual_property_tax=None,
+    loan_interest_rate=6.5,
+    loan_term_years=20,
+    down_payment_pct=10,
+    existing_noi=0,
+    existing_debt_service=0,
+    tax_credit_pct=30
+):
+    """
+    Commercial Solar DSCR + Bankability Model
+    """
+    # Defaults from env
+    loan_interest_rate = clean_number(os.environ.get("SOLAR_LOAN_INTEREST_RATE", loan_interest_rate)) or 6.5
+    loan_term_years = int(clean_number(os.environ.get("SOLAR_LOAN_TERM_YEARS", loan_term_years)) or 20)
+    down_payment_pct = clean_number(os.environ.get("SOLAR_DOWN_PAYMENT_PCT", down_payment_pct)) or 10
+    tax_credit_pct = clean_number(os.environ.get("PRELIMINARY_TAX_CREDIT_RATE", tax_credit_pct)) or 30
+    if tax_credit_pct > 1:
+        tax_credit_pct = tax_credit_pct / 100
 
+    loan_amount = project_cost * (1 - down_payment_pct/100)
+    monthly_payment = calculate_loan_payment(loan_amount, loan_interest_rate, loan_term_years)
+    annual_debt_service_solar = monthly_payment * 12
 
-# ============================================================
-# DSCR
-# ============================================================
+    # Year 1 DSCR for solar only
+    dscr_solar_only = (annual_solar_savings / annual_debt_service_solar) if annual_debt_service_solar > 0 else 0
 
-def calculate_dscr(financials_text):
+    # Combined DSCR if property has existing NOI/debt (optional inputs)
+    combined_noi = (existing_noi or 0) + (annual_solar_savings or 0)
+    combined_debt = (existing_debt_service or 0) + annual_debt_service_solar
+    dscr_combined = (combined_noi / combined_debt) if combined_debt > 0 else dscr_solar_only
 
-    if not financials_text:
-        return {
-            "noi": None,
-            "debt_service": None,
-            "dscr": None
-        }
+    # LTV
+    ltv = (loan_amount / property_market_value * 100) if property_market_value and property_market_value > 0 else None
 
-    prompt = f"""
-Analyze the following commercial financial information.
+    # ITC adjusted effective cost
+    itc_amount = project_cost * tax_credit_pct
+    net_project_cost = project_cost - itc_amount
+    net_loan_amount = net_project_cost * (1 - down_payment_pct/100)
+    monthly_payment_net = calculate_loan_payment(net_loan_amount, loan_interest_rate, loan_term_years)
+    annual_debt_net = monthly_payment_net * 12
+    dscr_after_itc = (annual_solar_savings / annual_debt_net) if annual_debt_net > 0 else 0
 
-Extract:
+    # 25-year lifetime savings (with 0.5% degradation, 3% escalator)
+    degradation = 0.005
+    escalator = 0.03
+    lifetime_savings = 0
+    yearly_savings = []
+    for yr in range(1, 26):
+        savings_yr = annual_solar_savings * ((1 + escalator) ** (yr-1)) * ((1 - degradation) ** (yr-1))
+        yearly_savings.append(savings_yr)
+        lifetime_savings += savings_yr
 
-1. Net Operating Income or EBITDA
-2. Annual Debt Service
+    # Simple financial ratios
+    roi_25yr = ((lifetime_savings - project_cost) / project_cost * 100) if project_cost else 0
+    lcoe = None # Levelized cost - simplified
 
-Return ONLY JSON:
+    # BANKABILITY RISK SCORE (0-100)
+    score = 50
+    risk_factors = []
 
-{{
-    "net_operating_income": null,
-    "annual_debt_service": null
-}}
+    # DSCR scoring
+    if dscr_after_itc >= 1.5:
+        score += 20
+        risk_factors.append("DSCR Excellent >=1.5")
+    elif dscr_after_itc >= 1.25:
+        score += 10
+        risk_factors.append("DSCR Good >=1.25 (Bankable)")
+    elif dscr_after_itc >= 1.1:
+        score += 0
+        risk_factors.append("DSCR Marginal 1.1-1.25 - Lender review")
+    else:
+        score -= 15
+        risk_factors.append(f"DSCR Weak {dscr_after_itc:.2f} <1.1 - High risk")
 
-Do not guess.
-
-Financial information:
-
-{financials_text}
-"""
-
-    try:
-
-        response = client.responses.create(
-            model=OPENAI_MODEL,
-            input=prompt
-        )
-
-        extracted = parse_ai_json(
-            response.output_text
-        )
-
-        noi = clean_number(
-            extracted.get("net_operating_income")
-        )
-
-        debt_service = clean_number(
-            extracted.get("annual_debt_service")
-        )
-
-        if (
-            noi is not None
-            and debt_service is not None
-            and debt_service > 0
-        ):
-
-            dscr = noi / debt_service
-
+    # LTV scoring
+    if ltv is not None:
+        if ltv <= 60:
+            score += 15
+            risk_factors.append(f"LTV Low {ltv:.1f}%")
+        elif ltv <= 75:
+            score += 5
+            risk_factors.append(f"LTV Moderate {ltv:.1f}%")
+        elif ltv <= 85:
+            score -= 5
+            risk_factors.append(f"LTV High {ltv:.1f}%")
         else:
+            score -= 15
+            risk_factors.append(f"LTV Very High {ltv:.1f}% - Difficult")
 
-            dscr = None
+    # Property value scoring
+    if property_market_value:
+        if property_market_value >= 1000000:
+            score += 10
+            risk_factors.append("Property Value Strong >$1M")
+        elif property_market_value >= 500000:
+            score += 5
+        else:
+            score -= 5
+            risk_factors.append("Property Value Low <$500k")
 
-        return {
-            "noi": noi,
-            "debt_service": debt_service,
-            "dscr": dscr
-        }
+    # Cap score
+    score = max(0, min(100, score))
 
-    except Exception as e:
-
-        log("DSCR ERROR", str(e))
-
-        return {
-            "noi": None,
-            "debt_service": None,
-            "dscr": None
-        }
-
-
-# ============================================================
-# PRELIMINARY BANKABILITY SCREEN
-# ============================================================
-
-def calculate_bankability(
-    property_data,
-    dscr,
-    bill_data,
-    review_flag
-):
-
-    """
-    This is a preliminary screening gate.
-    It is NOT a lender approval or credit decision.
-    """
-
-    issues = []
-
-    if property_data.get("status") != "MATCHED":
-
-        issues.append(
-            "Property ownership could not be independently verified."
-        )
-
-    if dscr is None:
-
-        issues.append(
-            "DSCR unavailable because financial statements were not provided."
-        )
-
-    elif dscr < 1.0:
-
-        issues.append(
-            "Calculated DSCR is below 1.00x."
-        )
-
-    if not bill_data.get("service_address"):
-
-        issues.append(
-            "Service address could not be confidently extracted."
-        )
-
-    if review_flag != "STANDARD":
-
-        issues.append(
-            "Project requires additional underwriting review."
-        )
-
-    if issues:
-
-        status = "REVIEW REQUIRED"
-
+    # Bankability tier
+    if score >= 80:
+        tier = "A - Highly Bankable"
+        approval_odds = "85-95%"
+    elif score >= 65:
+        tier = "B - Bankable with Conditions"
+        approval_odds = "65-85%"
+    elif score >= 50:
+        tier = "C - Marginal - Needs Mitigation"
+        approval_odds = "40-65%"
     else:
-
-        status = "PRELIMINARY SCREEN PASSED"
+        tier = "D - High Risk - Difficult to Finance"
+        approval_odds = "<40%"
 
     return {
-        "status": status,
-        "issues": issues
+        "loan_amount": loan_amount,
+        "monthly_payment": monthly_payment,
+        "annual_debt_service_solar": annual_debt_service_solar,
+        "dscr_solar_only": dscr_solar_only,
+        "dscr_after_itc": dscr_after_itc,
+        "dscr_combined": dscr_combined,
+        "ltv": ltv,
+        "itc_amount": itc_amount,
+        "net_project_cost": net_project_cost,
+        "net_loan_amount": net_loan_amount,
+        "annual_debt_net": annual_debt_net,
+        "lifetime_savings_25yr": lifetime_savings,
+        "roi_25yr_pct": roi_25yr,
+        "yearly_savings_25yr": yearly_savings,
+        "bankability_score": score,
+        "bankability_tier": tier,
+        "approval_odds": approval_odds,
+        "risk_factors": risk_factors,
+        "loan_interest_rate": loan_interest_rate,
+        "loan_term_years": loan_term_years,
+        "down_payment_pct": down_payment_pct
     }
 
-
 # ============================================================
-# SOLAR FINANCIAL MODEL
-# ============================================================
-
-def calculate_project_financials(
-    bill_data,
-    solar_kwh
-):
-
-    billing_kwh = clean_number(
-        bill_data.get("billing_period_kwh")
-    )
-
-    rate = clean_number(
-        bill_data.get("electric_rate_per_kwh")
-    )
-
-    if rate is None:
-        rate = 0.12
-
-    if solar_kwh is None:
-
-        return {
-            "system_size_kw": None,
-            "project_cost": None,
-            "year_1_savings": None,
-            "simple_payback": None,
-            "tax_credit": None,
-            "net_project_cost": None
-        }
-
-    # Preliminary sizing assumption.
-    #
-    # If annual usage is known, use it.
-    # Otherwise annualize the billing period.
-
-    annual_usage = clean_number(
-        bill_data.get("annual_kwh")
-    )
-
-    if annual_usage is None and billing_kwh is not None:
-
-        annual_usage = billing_kwh * 12
-
-    if annual_usage:
-
-        target_offset = min(
-            annual_usage,
-            solar_kwh
-        )
-
-        # Approximate system size based on modeled production.
-        production_per_kw = (
-            solar_kwh / 1.0
-            if solar_kwh > 0
-            else None
-        )
-
-        system_size_kw = (
-            annual_usage / production_per_kw
-            if production_per_kw
-            else None
-        )
-
-    else:
-
-        system_size_kw = None
-
-    # More conservative fallback.
-    if system_size_kw is None:
-
-        peak_kw = clean_number(
-            bill_data.get("peak_kw")
-        )
-
-        if peak_kw:
-            system_size_kw = peak_kw * 2
-
-    project_cost = (
-        system_size_kw * 1.50 * 1000
-        if system_size_kw
-        else None
-    )
-
-    year_1_savings = (
-        min(
-            annual_usage if annual_usage else solar_kwh,
-            solar_kwh
-        ) * rate
-        if solar_kwh
-        else None
-    )
-
-    tax_credit = (
-        project_cost * 0.30
-        if project_cost
-        else None
-    )
-
-    net_project_cost = (
-        project_cost - tax_credit
-        if project_cost is not None
-        else None
-    )
-
-    simple_payback = (
-        project_cost / year_1_savings
-        if project_cost and year_1_savings
-        else None
-    )
-
-    return {
-        "system_size_kw": system_size_kw,
-        "project_cost": project_cost,
-        "year_1_savings": year_1_savings,
-        "simple_payback": simple_payback,
-        "tax_credit": tax_credit,
-        "net_project_cost": net_project_cost
-    }
-
-
-# ============================================================
-# PDF REPORT
+# PDF GENERATOR - UPDATED WITH ATTOM + DSCR
 # ============================================================
 
 def create_underwriting_pdf(
     output_path,
-    bill,
-    geo,
-    solar,
-    financials,
-    property_data,
-    dscr_data,
-    bankability
+    property_address,
+    utility_provider,
+    system_size_kw,
+    annual_solar_kwh,
+    project_cost,
+    year_1_savings,
+    simple_payback,
+    tax_credit,
+    net_project_cost,
+    depreciation_tax_savings,
+    incentive_adjusted_payback,
+    year_1_net_benefit,
+    review_flag,
+    attom_data=None,
+    dscr_model=None,
+    annual_kwh=None,
+    peak_demand_kw=None
 ):
-
     styles = getSampleStyleSheet()
-
-    document = SimpleDocTemplate(
-        output_path,
-        pagesize=letter,
-        rightMargin=40,
-        leftMargin=40,
-        topMargin=40,
-        bottomMargin=40
-    )
-
+    document = SimpleDocTemplate(output_path, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
     story = []
 
-    story.append(
-        Paragraph(
-            "PRELIMINARY COMMERCIAL SOLAR UNDERWRITING REPORT",
-            styles["Title"]
-        )
-    )
-
-    story.append(Spacer(1, 10))
-
-    story.append(
-        Paragraph(
-            "Screening report only — subject to engineering, "
-            "utility, legal, tax, and formal credit review.",
-            styles["Normal"]
-        )
-    )
-
-    story.append(Spacer(1, 18))
-
-    # ========================================================
-    # BANKABILITY
-    # ========================================================
-
-    story.append(
-        Paragraph(
-            "<b>PRELIMINARY BANKABILITY & CREDIT SCREEN</b>",
-            styles["Heading2"]
-        )
-    )
-
-    dscr_display = (
-        f"{dscr_data['dscr']:.2f}x"
-        if dscr_data.get("dscr") is not None
-        else "Insufficient Data"
-    )
-
-    bankability_table = Table([
-        [
-            "Screening Status",
-            bankability["status"]
-        ],
-        [
-            "Property Owner",
-            property_data.get("owner")
-            or "Not verified"
-        ],
-        [
-            "DSCR",
-            dscr_display
-        ],
-        [
-            "ATTOM Property Match",
-            property_data.get("status", "Unknown")
-        ]
-    ], colWidths=[3.2 * inch, 3.3 * inch])
-
-    bankability_table.setStyle(
-        TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey)
-        ])
-    )
-
-    story.append(bankability_table)
-
-    story.append(Spacer(1, 15))
-
-    if bankability["issues"]:
-
-        story.append(
-            Paragraph(
-                "<b>Items Requiring Review</b>",
-                styles["Heading3"]
-            )
-        )
-
-        for issue in bankability["issues"]:
-
-            story.append(
-                Paragraph(
-                    "• " + issue,
-                    styles["Normal"]
-                )
-            )
-
-        story.append(Spacer(1, 15))
-
-    # ========================================================
-    # PROPERTY
-    # ========================================================
-
-    story.append(
-        Paragraph(
-            "<b>PROPERTY & UTILITY BASELINE</b>",
-            styles["Heading2"]
-        )
-    )
-
-    property_table = Table([
-        [
-            "Service Address",
-            bill.get("service_address") or "N/A"
-        ],
-        [
-            "Utility Provider",
-            bill.get("utility_provider") or "N/A"
-        ],
-        [
-            "Billing Period",
-            (
-                f"{bill.get('billing_start_date') or 'N/A'} "
-                f"to "
-                f"{bill.get('billing_end_date') or 'N/A'}"
-            )
-        ],
-        [
-            "Billing Period Usage",
-            (
-                f"{clean_number(bill.get('billing_period_kwh')):,.0f} kWh"
-                if clean_number(
-                    bill.get("billing_period_kwh")
-                ) is not None
-                else "N/A"
-            )
-        ]
-    ], colWidths=[2.2 * inch, 4.3 * inch])
-
-    property_table.setStyle(
-        TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-            ("VALIGN", (0, 0), (-1, -1), "TOP")
-        ])
-    )
-
-    story.append(property_table)
-
-    story.append(Spacer(1, 18))
-
-    # ========================================================
-    # SOLAR
-    # ========================================================
-
-    story.append(
-        Paragraph(
-            "<b>SOLAR PRODUCTION MODEL</b>",
-            styles["Heading2"]
-        )
-    )
-
-    solar_table = Table([
-        [
-            "Latitude",
-            str(geo.get("latitude") or "N/A")
-        ],
-        [
-            "Longitude",
-            str(geo.get("longitude") or "N/A")
-        ],
-        [
-            "Estimated Annual Solar Production",
-            (
-                f"{solar.get('annual_solar_kwh'):,.0f} kWh"
-                if solar.get("annual_solar_kwh") is not None
-                else "N/A"
-            )
-        ]
-    ], colWidths=[3.2 * inch, 3.3 * inch])
-
-    solar_table.setStyle(
-        TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold")
-        ])
-    )
-
-    story.append(solar_table)
-
-    story.append(Spacer(1, 18))
-
-    # ========================================================
-    # FINANCIAL
-    # ========================================================
-
-    story.append(
-        Paragraph(
-            "<b>PROJECT ECONOMICS</b>",
-            styles["Heading2"]
-        )
-    )
-
-    def money(value):
-        return (
-            f"${value:,.2f}"
-            if value is not None
-            else "N/A"
-        )
-
-    financial_table = Table([
-        [
-            "Preliminary System Size",
-            (
-                f"{financials['system_size_kw']:,.2f} kW"
-                if financials.get("system_size_kw")
-                else "N/A"
-            )
-        ],
-        [
-            "Estimated Project Cost",
-            money(financials.get("project_cost"))
-        ],
-        [
-            "Estimated Year 1 Savings",
-            money(financials.get("year_1_savings"))
-        ],
-        [
-            "Estimated Tax Credit",
-            money(financials.get("tax_credit"))
-        ],
-        [
-            "Estimated Net Project Cost",
-            money(financials.get("net_project_cost"))
-        ],
-        [
-            "Simple Payback",
-            (
-                f"{financials['simple_payback']:.1f} years"
-                if financials.get("simple_payback")
-                else "N/A"
-            )
-        ]
-    ], colWidths=[3.2 * inch, 3.3 * inch])
-
-    financial_table.setStyle(
-        TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-            ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold")
-        ])
-    )
-
-    story.append(financial_table)
-
+    story.append(Paragraph("PRELIMINARY COMMERCIAL SOLAR UNDERWRITING & BANKABILITY REPORT", styles["Title"]))
+    story.append(Spacer(1, 8))
+    story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | For preliminary screening only — subject to engineering, utility, legal, and tax review.", styles["Normal"]))
     story.append(Spacer(1, 20))
 
-    story.append(
-        Paragraph(
-            "<b>IMPORTANT:</b> This report is a preliminary "
-            "screening analysis. It is not an engineering design, "
-            "formal appraisal, tax opinion, credit approval, or "
-            "financing commitment.",
+    # PROPERTY & UTILITY
+    story.append(Paragraph("<b>1. PROPERTY & UTILITY</b>", styles["Heading2"]))
+    prop_rows = [
+        ["Property Address", str(property_address or "N/A")],
+        ["Utility Provider", str(utility_provider or "N/A")],
+        ["Annual True Usage", f"{annual_kwh:,.0f} kWh" if annual_kwh else "N/A"],
+        ["Peak Demand", f"{peak_demand_kw:.1f} kW" if peak_demand_kw else "N/A"],
+        ["Underwriting Review", str(review_flag or "N/A")]
+    ]
+    if attom_data:
+        prop_rows.extend([
+            ["ATTOM Market Value", f"${attom_data.get('market_value'):,.0f}" if attom_data.get('market_value') else "N/A (Add ATTOM_API_KEY)"],
+            ["Building Size", f"{attom_data.get('building_sqft'):,.0f} sqft" if attom_data.get('building_sqft') else "N/A"],
+            ["Year Built", str(int(attom_data.get('year_built'))) if attom_data.get('year_built') else "N/A"],
+            ["Property Type", str(attom_data.get('property_type') or "N/A")],
+            ["Lot Size", f"{attom_data.get('lot_size_sqft'):,.0f} sqft" if attom_data.get('lot_size_sqft') else "N/A"],
+            ["AVM Value", f"${attom_data.get('avm_value'):,.0f}" if attom_data.get('avm_value') else "N/A"],
+        ])
+    t = Table(prop_rows, colWidths=[2.2*inch, 4.3*inch])
+    t.setStyle(TableStyle([("GRID", (0,0), (-1,-1), 0.5, colors.grey), ("VALIGN", (0,0), (-1,-1), "TOP"), ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"), ("BACKGROUND", (0,0), (0,-1), colors.HexColor("#E8E8E8"))]))
+    story.append(t)
+    story.append(Spacer(1, 20))
+
+    # SOLAR SYSTEM
+    story.append(Paragraph("<b>2. SOLAR SYSTEM SIZING</b>", styles["Heading2"]))
+    solar_rows = [
+        ["Preliminary System Size", f"{system_size_kw:.2f} kW" if system_size_kw else "N/A"],
+        ["Estimated Annual Production", f"{annual_solar_kwh:,.0f} kWh" if annual_solar_kwh else "N/A"],
+        ["PVWatts Yield", f"{annual_solar_kwh/system_size_kw:.0f} kWh/kW/yr" if annual_solar_kwh and system_size_kw else "N/A"],
+        ["Coverage Ratio", f"{annual_solar_kwh/annual_kwh*100:.1f}%" if annual_solar_kwh and annual_kwh else "N/A"]
+    ]
+    t = Table(solar_rows, colWidths=[2.5*inch, 4.0*inch])
+    t.setStyle(TableStyle([("GRID", (0,0), (-1,-1), 0.5, colors.grey), ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold")]))
+    story.append(t)
+    story.append(Spacer(1, 20))
+
+    # FINANCIAL UNDERWRITING
+    story.append(Paragraph("<b>3. FINANCIAL UNDERWRITING</b>", styles["Heading2"]))
+    fin_rows = [
+        ["Project Cost", f"${project_cost:,.0f}" if project_cost else "N/A"],
+        ["Cost per Watt", f"${project_cost/system_size_kw/1000:.2f}/W" if project_cost and system_size_kw else "N/A"],
+        ["Year 1 Energy Savings", f"${year_1_savings:,.0f}" if year_1_savings else "N/A"],
+        ["Simple Payback", f"{simple_payback:.2f} years" if simple_payback else "N/A"],
+        ["Federal ITC (30%)", f"${tax_credit:,.0f}" if tax_credit else "N/A"],
+        ["Net Project Cost After ITC", f"${net_project_cost:,.0f}" if net_project_cost else "N/A"],
+        ["Depreciation Tax Savings", f"${depreciation_tax_savings:,.0f}" if depreciation_tax_savings else "N/A"],
+        ["Incentive-Adjusted Payback", f"{incentive_adjusted_payback:.2f} years" if incentive_adjusted_payback else "N/A"],
+        ["Year 1 Net Economic Benefit", f"${year_1_net_benefit:,.0f}" if year_1_net_benefit else "N/A"],
+    ]
+    t = Table(fin_rows, colWidths=[2.5*inch, 4.0*inch])
+    t.setStyle(TableStyle([("GRID", (0,0), (-1,-1), 0.5, colors.grey), ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold")]))
+    story.append(t)
+    story.append(Spacer(1, 20))
+
+    # DSCR & BANKABILITY
+    if dscr_model:
+        story.append(Paragraph("<b>4. DSCR & BANKABILITY ASSESSMENT (ATTOM + SOLAR LOAN)</b>", styles["Heading2"]))
+        dscr_rows = [
+            ["Solar Loan Amount", f"${dscr_model.get('loan_amount'):,.0f} ({dscr_model.get('down_payment_pct'):.0f}% down)"],
+            ["Interest Rate / Term", f"{dscr_model.get('loan_interest_rate'):.2f}% / {dscr_model.get('loan_term_years')} years"],
+            ["Monthly Payment (Gross)", f"${dscr_model.get('monthly_payment'):,.2f}"],
+            ["Annual Debt Service", f"${dscr_model.get('annual_debt_service_solar'):,.0f}"],
+            ["Annual Debt Service (After ITC)", f"${dscr_model.get('annual_debt_net'):,.0f}"],
+            ["DSCR - Solar Only", f"{dscr_model.get('dscr_solar_only'):.2f}x"],
+            ["DSCR - After ITC (Key Metric)", f"{dscr_model.get('dscr_after_itc'):.2f}x"],
+            ["DSCR - Combined (if NOI provided)", f"{dscr_model.get('dscr_combined'):.2f}x"],
+            ["LTV (Loan / Market Value)", f"{dscr_model.get('ltv'):.1f}%" if dscr_model.get('ltv') else "N/A (Need ATTOM value)"],
+            ["25-Year Lifetime Savings", f"${dscr_model.get('lifetime_savings_25yr'):,.0f}"],
+            ["25-Year ROI", f"{dscr_model.get('roi_25yr_pct'):.1f}%"],
+            ["", ""],
+            ["BANKABILITY SCORE", f"{dscr_model.get('bankability_score')}/100"],
+            ["BANKABILITY TIER", f"{dscr_model.get('bankability_tier')}"],
+            ["EST. APPROVAL ODDS", f"{dscr_model.get('approval_odds')}"],
+        ]
+        t = Table(dscr_rows, colWidths=[2.8*inch, 3.7*inch])
+        t.setStyle(TableStyle([
+            ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
+            ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
+            ("BACKGROUND", (0,12), (-1,14), colors.HexColor("#B4C6E7")),
+            ("FONTNAME", (0,12), (-1,14), "Helvetica-Bold"),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 12))
+        risk_text = "<br/>".join([f"• {r}" for r in dscr_model.get('risk_factors', [])])
+        story.append(Paragraph(f"<b>Risk Factors:</b><br/>{risk_text}", styles["Normal"]))
+        story.append(Spacer(1, 20))
+
+        # DSCR Interpretation
+        story.append(Paragraph("<b>DSCR INTERPRETATION FOR LENDERS:</b>", styles["Heading3"]))
+        story.append(Paragraph(
+            "DSCR >=1.25 is considered bankable for commercial solar. DSCR >=1.5 is excellent. "
+            "Below 1.1 requires additional collateral or higher down payment. "
+            "This model uses solar savings as income vs solar loan debt service. "
+            "For full commercial DSCR, include property NOI and existing debt service via env vars PROPERTY_NOI and EXISTING_DEBT_SERVICE.",
             styles["Normal"]
-        )
-    )
+        ))
+        story.append(Spacer(1, 20))
+        story.append(PageBreak())
+
+        # 25-Year Cash Flow
+        story.append(Paragraph("<b>5. 25-YEAR CASH FLOW PROJECTION</b>", styles["Heading2"]))
+        cf_header = ["Year", "Annual Savings", "Cumulative Savings", "Net Cash (Cum - Cost)"]
+        cf_rows = [cf_header]
+        cum = 0
+        for i, yr_sav in enumerate(dscr_model.get('yearly_savings_25yr', [])[:25], 1):
+            cum += yr_sav
+            net = cum - (project_cost or 0)
+            cf_rows.append([str(i), f"${yr_sav:,.0f}", f"${cum:,.0f}", f"${net:,.0f}"])
+            if i >= 10 and i < 25:  # Show first 10 and last year for brevity
+                if i == 10:
+                    cf_rows.append(["...", "...", "...", "..."])
+                continue
+            if i > 10 and i < 25:
+                continue
+        # Rebuild with only years 1-10 and 25
+        cf_rows_filtered = [cf_header]
+        cum = 0
+        yearly = dscr_model.get('yearly_savings_25yr', [])
+        for idx in list(range(0,10)) + [24]:
+            yr = idx+1
+            sav = yearly[idx]
+            cum = sum(yearly[:yr])
+            net = cum - (project_cost or 0)
+            cf_rows_filtered.append([str(yr), f"${sav:,.0f}", f"${cum:,.0f}", f"${net:,.0f}"])
+        
+        t = Table(cf_rows_filtered, colWidths=[0.8*inch, 1.8*inch, 1.8*inch, 1.8*inch])
+        t.setStyle(TableStyle([("GRID", (0,0), (-1,-1), 0.5, colors.grey), ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#D9D9D9")), ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold")]))
+        story.append(t)
 
     document.build(story)
 
-
 # ============================================================
-# CLOUDINARY
-# ============================================================
-
-def upload_report_to_cloudinary(pdf_path):
-
-    result = cloudinary.uploader.upload(
-        pdf_path,
-        resource_type="raw",
-        folder="mholdings/underwriting"
-    )
-
-    return result.get("secure_url")
-
-
-# ============================================================
-# GHL UPDATE
-# ============================================================
-
-def update_ghl_contact(
-    contact_id,
-    report_url=None,
-    status=None
-):
-
-    if not GHL_API_TOKEN or not contact_id:
-        return {
-            "status": "SKIPPED",
-            "reason": "GHL credentials/contact ID missing"
-        }
-
-    custom_fields = []
-
-    if GHL_REPORT_URL_FIELD and report_url:
-
-        custom_fields.append({
-            "id": GHL_REPORT_URL_FIELD,
-            "field_value": report_url
-        })
-
-    if GHL_STATUS_FIELD and status:
-
-        custom_fields.append({
-            "id": GHL_STATUS_FIELD,
-            "field_value": status
-        })
-
-    if not custom_fields:
-        return {
-            "status": "SKIPPED",
-            "reason": "No GHL custom fields configured"
-        }
-
-    url = (
-        "https://services.leadconnectorhq.com/"
-        f"contacts/{contact_id}"
-    )
-
-    headers = {
-        "Authorization": f"Bearer {GHL_API_TOKEN}",
-        "Version": "2021-07-28",
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-
-    payload = {
-        "customFields": custom_fields
-    }
-
-    response = requests.put(
-        url,
-        headers=headers,
-        json=payload,
-        timeout=20
-    )
-
-    log("GHL UPDATE", {
-        "status_code": response.status_code,
-        "response": response.text[:1000]
-    })
-
-    return {
-        "status_code": response.status_code,
-        "response": response.text[:1000]
-    }
-
-
-# ============================================================
-# HEALTH CHECK
+# HOME
 # ============================================================
 
 @app.route("/", methods=["GET"])
 def home():
-
-    return jsonify({
-        "service": "MHoldings Commercial Solar Underwriting",
-        "status": "online",
-        "webhook": "/webhook"
-    })
-
+    return jsonify({"status": "online", "version": "ATTOM_DSCR_v1"})
 
 # ============================================================
-# DEBUG ENDPOINT
-# ============================================================
-
-@app.route("/debug", methods=["POST"])
-def debug():
-
-    payload = request.get_json(
-        silent=True
-    )
-
-    log("DEBUG GHL PAYLOAD", payload)
-
-    return jsonify({
-        "received": True,
-        "keys": list(payload.keys())
-        if isinstance(payload, dict)
-        else None
-    })
-
-
-# ============================================================
-# MAIN GHL WEBHOOK
+# WEBHOOK - WITH ATTOM + DSCR
 # ============================================================
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
+    data = request.get_json(silent=True) or {}
+    print("\n======================== NEW REQUEST RECEIVED ========================")
+    print(json.dumps(data, indent=2)[:2000])
 
     try:
+        custom_data = data.get("customData", {})
+        contact_id = custom_data.get("contact_id")
+        bill_data = custom_data.get("utility_bill")
 
-        payload = request.get_json(
-            silent=True
-        )
-
-        if payload is None:
-
-            log(
-                "GHL SENT NON-JSON REQUEST",
-                {
-                    "content_type": request.content_type,
-                    "raw_body": request.data[:5000].decode(
-                        "utf-8",
-                        errors="replace"
-                    )
-                }
-            )
-
-            return jsonify({
-                "success": False,
-                "error": "Request was not valid JSON."
-            }), 400
-
-        # ====================================================
-        # CRITICAL DEBUGGING
-        # ====================================================
-
-        log(
-            "========== GHL WEBHOOK RECEIVED ==========",
-            payload
-        )
-
-        # ====================================================
-        # CONTACT
-        # ====================================================
-
-        contact_id = extract_contact_id(payload)
-
-        log(
-            "CONTACT ID",
-            {
-                "contact_id": contact_id
-            }
-        )
-
-        # ====================================================
-        # BILL URL
-        # ====================================================
-
-        bill_url = None
-
-        # First try likely fields.
-        likely_fields = [
-            "utility_bill",
-            "utilityBill",
-            "bill",
-            "bill_url",
-            "billUrl",
-            "file",
-            "files",
-            "attachment",
-            "attachments"
-        ]
-
-        for field in likely_fields:
-
-            if field in payload:
-
-                bill_url = get_bill_url(
-                    payload[field]
-                )
-
-                if bill_url:
-                    break
-
-        # Search nested payload if necessary.
+        bill_url = get_bill_url(bill_data)
         if not bill_url:
+            return jsonify({"status": "success", "message": "No utility bill URL received"})
 
-            bill_url = recursively_find_file_url(
-                payload
-            )
+        # Download bill
+        response = requests.get(bill_url, timeout=30)
+        if response.status_code != 200:
+            return jsonify({"status": "error", "message": "Could not download utility bill"}), 400
 
-        log(
-            "UTILITY BILL URL FOUND",
-            {
-                "bill_url": bill_url
-            }
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_file:
+            temp_file.write(response.content)
+            pdf_path = temp_file.name
+
+        # Upload to OpenAI
+        with open(pdf_path, "rb") as pdf_file:
+            uploaded_file = client.files.create(file=pdf_file, purpose="user_data")
+
+        print(f"File uploaded: {uploaded_file.id}")
+
+        # AI Extraction - Enhanced for ATTOM/DSCR
+        result = client.responses.create(
+            model="gpt-4.1",
+            input=[{
+                "role": "user",
+                "content": [
+                    {"type": "input_file", "file_id": uploaded_file.id},
+                    {"type": "input_text", "text": """
+        You are extracting commercial electricity bill data for EPC solar underwriting + ATTOM DSCR bankability.
+
+        Read ENTIRE bill. Check ALL pages for meter details, demand sections, solar registers.
+
+        CRITICAL - DETECT SOLAR BILL (POST-SOLAR):
+        Look for Reg 9/Reg 10, Billing/Delivered vs PV Surplus Export, Solar Production Meter, Net Billing, NEG
+        If BOTH delivered and export registers exist, this is POST-SOLAR bill. Set is_post_solar_bill = true.
+
+        Extract:
+        - Utility provider
+        - Delivered kWh (Reg 9 / Billing Meter)
+        - Export kWh (Reg 10 / PV Surplus)
+        - Gross solar production kWh if present
+        - Net billing kWh (Delivered - Export)
+        - Self-consumption = Gross - Export
+        - TRUE site load = Delivered + Self-Consumption
+        - Peak demand kW, demand rate $/kW, demand charge $
+        - All energy rates: base $/kWh, fuel adj, regulatory adj, buyback/export credit
+        - Billing period, property/service address
+
+        Return ONLY valid JSON:
+        {
+            "utility_provider": "",
+            "is_post_solar_bill": false,
+            "monthly_delivered_kwh": "",
+            "monthly_export_kwh": "",
+            "monthly_gross_production_kwh": "",
+            "monthly_self_consumption_kwh": "",
+            "monthly_net_billing_kwh": "",
+            "monthly_true_site_kwh": "",
+            "monthly_kwh_usage": "",
+            "annual_kwh_usage": "",
+            "annual_true_site_kwh": "",
+            "annual_kwh_source": "",
+            "peak_demand_kw": "",
+            "demand_rate_per_kw": "",
+            "demand_charge": "",
+            "billing_period": "",
+            "property_address": "",
+            "electric_rate_per_kwh": "",
+            "base_energy_rate_per_kwh": "",
+            "fuel_adjustment_per_kwh": "",
+            "regulatory_adjustment_per_kwh": "",
+            "export_buyback_rate_per_kwh": "",
+            "total_effective_rate_per_kwh": ""
+        }
+        Never use zero for missing. Return empty string if not found.
+        """}
+                ]
+            }]
         )
 
-        if not bill_url:
+        print("AI Extraction:", result.output_text[:1000])
 
-            log(
-                "!!! BILL URL NOT FOUND !!!",
-                payload
-            )
+        # Parse AI JSON
+        try:
+            ai_text = result.output_text.strip()
+            if "```json" in ai_text:
+                ai_text = ai_text.split("```json", 1)[1]
+            elif "```" in ai_text:
+                ai_text = ai_text.split("```", 1)[1]
+            if "```" in ai_text:
+                ai_text = ai_text.split("```", 1)[0]
+            ai_text = ai_text.strip()
+            json_start = ai_text.find("{")
+            json_end = ai_text.rfind("}")
+            if json_start == -1 or json_end == -1:
+                raise ValueError("No JSON object found")
+            json_text = ai_text[json_start:json_end+1]
+            extracted_data = json.loads(json_text)
+        except Exception as e:
+            print("JSON extraction error:", e)
+            extracted_data = {}
 
-            return jsonify({
-                "success": False,
-                "error": (
-                    "GHL webhook reached Render, "
-                    "but no utility-bill URL was found."
-                )
-            }), 400
-
-        # ====================================================
-        # DOWNLOAD BILL
-        # ====================================================
-
-        pdf_path = download_file(
-            bill_url
-        )
-
-        # ====================================================
-        # OPENAI EXTRACTION
-        # ====================================================
-
-        bill_data = extract_utility_bill(
-            pdf_path
-        )
-
-        log(
-            "EXTRACTED BILL DATA",
-            bill_data
-        )
+        print("EXTRACTED:", json.dumps(extracted_data, indent=2))
 
         # ====================================================
-        # ADDRESS
+        # USAGE CALCULATION - CORRECTED FOR TEXAS COMMERCIAL
         # ====================================================
+        monthly_delivered_kwh = clean_number(extracted_data.get("monthly_delivered_kwh"))
+        monthly_export_kwh = clean_number(extracted_data.get("monthly_export_kwh"))
+        monthly_gross_prod_kwh = clean_number(extracted_data.get("monthly_gross_production_kwh"))
+        monthly_self_cons_kwh = clean_number(extracted_data.get("monthly_self_consumption_kwh"))
+        monthly_net_billing_kwh = clean_number(extracted_data.get("monthly_net_billing_kwh"))
+        monthly_true_site_kwh = clean_number(extracted_data.get("monthly_true_site_kwh"))
+        annual_true_site_kwh = clean_number(extracted_data.get("annual_true_site_kwh"))
+        is_post_solar = extracted_data.get("is_post_solar_bill") is True or str(extracted_data.get("is_post_solar_bill")).lower() == "true"
 
-        property_address = bill_data.get(
-            "service_address"
-        )
+        if monthly_self_cons_kwh is None and monthly_gross_prod_kwh and monthly_export_kwh:
+            monthly_self_cons_kwh = monthly_gross_prod_kwh - monthly_export_kwh
 
-        if not property_address:
+        if monthly_true_site_kwh is None:
+            if is_post_solar and monthly_delivered_kwh is not None and monthly_self_cons_kwh is not None:
+                monthly_true_site_kwh = monthly_delivered_kwh + monthly_self_cons_kwh
+                is_post_solar = True
+            elif monthly_delivered_kwh is not None:
+                monthly_true_site_kwh = monthly_delivered_kwh
 
-            raise Exception(
-                "No service address could be extracted."
-            )
+        annual_kwh = clean_number(extracted_data.get("annual_kwh_usage"))
+        current_period_kwh = clean_number(extracted_data.get("current_period_kwh"))
+        peak_demand_kw = clean_number(extracted_data.get("peak_demand_kw"))
+        demand_rate_per_kw = clean_number(extracted_data.get("demand_rate_per_kw"))
+        export_buyback_rate = clean_number(extracted_data.get("export_buyback_rate_per_kwh"))
+        fuel_adj_per_kwh = clean_number(extracted_data.get("fuel_adjustment_per_kwh"))
+        base_energy_rate = clean_number(extracted_data.get("base_energy_rate_per_kwh"))
 
-        geo = geocode_address(
-            property_address
-        )
+        usage_source = "bill_annual"
+        annual_kwh_true = None
 
-        log(
-            "GEOCODE RESULT",
-            geo
-        )
+        if annual_true_site_kwh:
+            annual_kwh_true = annual_true_site_kwh
+            usage_source = "true-site-reconstructed"
+        elif monthly_true_site_kwh:
+            annual_kwh_true = monthly_true_site_kwh * 12
+            usage_source = "true_site_monthly_x12" if is_post_solar else "monthly_usage_x12"
+        elif annual_kwh:
+            annual_kwh_true = annual_kwh
+
+        if annual_kwh_true:
+            annual_kwh = annual_kwh_true
+
+        if annual_kwh is None and current_period_kwh is not None and current_period_kwh > 0:
+            annual_kwh = current_period_kwh * 12
+            usage_source = "annualized_current_billing_period"
+
+        is_neg_bill = False
+        if monthly_net_billing_kwh is not None and monthly_net_billing_kwh < 0:
+            is_neg_bill = True
+        if monthly_delivered_kwh and monthly_export_kwh and monthly_delivered_kwh < monthly_export_kwh:
+            is_neg_bill = True
 
         # ====================================================
-        # PRELIMINARY SYSTEM SIZE
+        # PROPERTY ADDRESS + GEOCODING + ATTOM
         # ====================================================
+        property_address = extracted_data.get("property_address", "")
+        latitude = ""
+        longitude = ""
 
-        peak_kw = clean_number(
-            bill_data.get("peak_kw")
-        )
+        if property_address:
+            google_api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
+            if google_api_key:
+                try:
+                    geocode_url = "https://maps.googleapis.com/maps/api/geocode/json"
+                    geocode_response = requests.get(geocode_url, params={"address": property_address, "key": google_api_key}, timeout=20)
+                    geocode_data = geocode_response.json()
+                    if geocode_data.get("status") == "OK" and geocode_data.get("results"):
+                        location = geocode_data["results"][0]["geometry"]["location"]
+                        latitude = location.get("lat", "")
+                        longitude = location.get("lng", "")
+                except Exception as e:
+                    print("Geocode error:", e)
 
-        if peak_kw:
+        print(f"Address: {property_address} Lat: {latitude} Lng: {longitude}")
 
-            system_size_kw = peak_kw * 2
-
-        else:
-
-            system_size_kw = 500
+        # ATTOM Data
+        attom_api_key = os.environ.get("ATTOM_API_KEY")
+        attom_data = get_attom_property_data(property_address, attom_api_key)
+        print("ATTOM:", json.dumps({k: v for k, v in attom_data.items() if k not in ["raw_detail", "raw_avm"]}, indent=2))
 
         # ====================================================
         # PVWATTS
         # ====================================================
-
-        solar = run_pvwatts(
-            geo.get("latitude"),
-            geo.get("longitude"),
-            system_size_kw
-        )
-
-        log(
-            "PVWATTS RESULT",
-            solar
-        )
-
-        # ====================================================
-        # FINANCIAL MODEL
-        # ====================================================
-
-        financials = calculate_project_financials(
-            bill_data,
-            solar.get("annual_solar_kwh")
-        )
-
-        # ====================================================
-        # PROPERTY
-        # ====================================================
-
-        property_data = fetch_attom_property_data(
-            property_address
-        )
+        nrel_api_key = os.environ.get("NREL_API_KEY")
+        annual_production_per_kw = None
+        pvwatts_data = {}
+        if latitude and longitude and nrel_api_key:
+            try:
+                pvwatts_url = "https://developer.nrel.gov/api/pvwatts/v8.json"
+                pvwatts_params = {
+                    "api_key": nrel_api_key,
+                    "lat": latitude,
+                    "lon": longitude,
+                    "system_capacity": 1,
+                    "azimuth": 180,
+                    "tilt": 20,
+                    "array_type": 1,
+                    "module_type": 1,
+                    "losses": 14
+                }
+                pvwatts_response = requests.get(pvwatts_url, params=pvwatts_params, timeout=30)
+                pvwatts_data = pvwatts_response.json()
+                if pvwatts_response.status_code == 200:
+                    annual_production_per_kw = clean_number(pvwatts_data.get("outputs", {}).get("ac_annual"))
+            except Exception as e:
+                print("PVWatts error:", e)
 
         # ====================================================
-        # DSCR
-        #
-        # This remains unavailable unless you provide
-        # financial-statement information.
+        # SYSTEM SIZING
         # ====================================================
+        annual_kwh_for_sizing = annual_kwh_true if annual_kwh_true else annual_kwh
+        preliminary_system_size_kw = None
+        estimated_annual_solar_kwh = None
+        if annual_kwh_for_sizing and annual_kwh_for_sizing > 0 and annual_production_per_kw and annual_production_per_kw > 0:
+            preliminary_system_size_kw = annual_kwh_for_sizing / annual_production_per_kw
+            estimated_annual_solar_kwh = preliminary_system_size_kw * annual_production_per_kw
+            if peak_demand_kw and preliminary_system_size_kw > peak_demand_kw * 1.2:
+                print(f"WARNING: System {preliminary_system_size_kw}kW > 120% of peak {peak_demand_kw}kW")
 
-        financial_text = payload.get(
-            "financial_statements"
+        # ====================================================
+        # FINANCIAL - CORRECTED FOR COMMERCIAL
+        # ====================================================
+        cost_per_watt = clean_number(os.environ.get("SOLAR_COST_PER_WATT", "1.95")) or 1.95
+        estimated_project_cost = None
+        estimated_year_1_savings = None
+        simple_payback_years = None
+
+        if preliminary_system_size_kw is not None:
+            estimated_project_cost = preliminary_system_size_kw * 1000 * cost_per_watt
+
+        electricity_rate = clean_number(extracted_data.get("electric_rate_per_kwh"))
+        base_rate = clean_number(extracted_data.get("base_energy_rate_per_kwh")) or electricity_rate
+        fuel_adj = clean_number(extracted_data.get("fuel_adjustment_per_kwh")) or 0
+        reg_adj = clean_number(extracted_data.get("regulatory_adjustment_per_kwh")) or 0
+        fuel_adj_env = clean_number(os.environ.get("DEFAULT_FUEL_ADJ", "0.0314")) or 0.0314
+        reg_adj_env = clean_number(os.environ.get("DEFAULT_REG_ADJ", "0.01494")) or 0.01494
+        default_rate = clean_number(os.environ.get("DEFAULT_ELECTRIC_RATE", "0.0821")) or 0.0821
+
+        if base_rate is None:
+            base_rate = default_rate
+        if fuel_adj == 0:
+            fuel_adj = fuel_adj_env
+        if reg_adj == 0:
+            reg_adj = reg_adj_env
+
+        total_effective_rate = None
+        if base_rate:
+            total_effective_rate = base_rate + (fuel_adj or 0) + (reg_adj or 0)
+            electricity_rate = total_effective_rate
+        elif electricity_rate:
+            total_effective_rate = electricity_rate
+        else:
+            total_effective_rate = default_rate + fuel_adj + reg_adj
+            electricity_rate = total_effective_rate
+
+        effective_rate_for_savings = total_effective_rate or electricity_rate
+        demand_rate_per_kw_val = clean_number(extracted_data.get("demand_rate_per_kw")) or 8.50
+        export_rate = clean_number(extracted_data.get("export_buyback_rate_per_kwh")) or 0.0585
+        coincidence_factor = float(os.environ.get("DEMAND_COINCIDENCE_FACTOR", "0.6") or 0.6)
+
+        estimated_energy_savings = None
+        estimated_demand_savings = None
+        estimated_export_value = None
+
+        if estimated_annual_solar_kwh is not None and effective_rate_for_savings:
+            if monthly_self_cons_kwh and monthly_gross_prod_kwh and monthly_gross_prod_kwh > 0:
+                self_cons_ratio = monthly_self_cons_kwh / monthly_gross_prod_kwh
+                annual_self_cons_kwh = estimated_annual_solar_kwh * self_cons_ratio
+                annual_export_kwh = estimated_annual_solar_kwh * (1 - self_cons_ratio)
+                estimated_energy_savings = annual_self_cons_kwh * effective_rate_for_savings
+                estimated_export_value = annual_export_kwh * export_rate
+            else:
+                estimated_energy_savings = estimated_annual_solar_kwh * 0.7 * effective_rate_for_savings
+                estimated_export_value = estimated_annual_solar_kwh * 0.3 * export_rate
+
+        if peak_demand_kw and peak_demand_kw > 0:
+            estimated_demand_savings = peak_demand_kw * coincidence_factor * demand_rate_per_kw_val * 12
+
+        if estimated_energy_savings is not None:
+            estimated_year_1_savings = estimated_energy_savings
+            if estimated_demand_savings:
+                estimated_year_1_savings += estimated_demand_savings
+            if estimated_export_value:
+                estimated_year_1_savings += estimated_export_value
+
+        if estimated_project_cost is not None and estimated_year_1_savings and estimated_year_1_savings > 0:
+            simple_payback_years = estimated_project_cost / estimated_year_1_savings
+
+        # TAX CREDIT
+        tax_credit_rate_raw = os.environ.get("PRELIMINARY_TAX_CREDIT_RATE", "30")
+        preliminary_tax_credit_rate = None
+        estimated_tax_credit = None
+        estimated_net_project_cost = None
+        if str(tax_credit_rate_raw).strip():
+            preliminary_tax_credit_rate = clean_number(tax_credit_rate_raw)
+            if preliminary_tax_credit_rate is not None:
+                if preliminary_tax_credit_rate > 1:
+                    preliminary_tax_credit_rate /= 100
+                if 0 <= preliminary_tax_credit_rate <= 1 and estimated_project_cost is not None:
+                    estimated_tax_credit = estimated_project_cost * preliminary_tax_credit_rate
+                    estimated_net_project_cost = estimated_project_cost - estimated_tax_credit
+
+        # DEPRECIATION
+        depreciation_rate_raw = os.environ.get("PRELIMINARY_DEPRECIATION_RATE", "100")
+        preliminary_depreciation_rate = None
+        estimated_depreciation_benefit = None
+        if str(depreciation_rate_raw).strip():
+            preliminary_depreciation_rate = clean_number(depreciation_rate_raw)
+            if preliminary_depreciation_rate is not None:
+                if preliminary_depreciation_rate > 1:
+                    preliminary_depreciation_rate /= 100
+                if 0 <= preliminary_depreciation_rate <= 1 and estimated_project_cost is not None:
+                    estimated_depreciation_benefit = estimated_project_cost * preliminary_depreciation_rate
+
+        corporate_tax_rate_raw = os.environ.get("PRELIMINARY_CORPORATE_TAX_RATE", "21")
+        preliminary_corporate_tax_rate = None
+        estimated_depreciation_tax_savings = None
+        if str(corporate_tax_rate_raw).strip():
+            preliminary_corporate_tax_rate = clean_number(corporate_tax_rate_raw)
+            if preliminary_corporate_tax_rate is not None:
+                if preliminary_corporate_tax_rate > 1:
+                    preliminary_corporate_tax_rate /= 100
+                if 0 <= preliminary_corporate_tax_rate <= 1 and estimated_depreciation_benefit is not None:
+                    estimated_depreciation_tax_savings = estimated_depreciation_benefit * preliminary_corporate_tax_rate
+
+        incentive_adjusted_payback_years = None
+        if estimated_net_project_cost is not None and estimated_year_1_savings and estimated_year_1_savings > 0:
+            incentive_adjusted_payback_years = estimated_net_project_cost / estimated_year_1_savings
+
+        estimated_year_1_net_economic_benefit = None
+        if estimated_year_1_savings is not None:
+            estimated_year_1_net_economic_benefit = estimated_year_1_savings + (estimated_depreciation_tax_savings if estimated_depreciation_tax_savings is not None else 0)
+
+        # ====================================================
+        # DSCR & BANKABILITY MODEL
+        # ====================================================
+        property_market_value = attom_data.get("market_value") or attom_data.get("avm_value") or clean_number(os.environ.get("DEFAULT_PROPERTY_VALUE", "1000000"))
+        
+        existing_noi = clean_number(os.environ.get("PROPERTY_NOI", "0")) or 0
+        existing_debt = clean_number(os.environ.get("EXISTING_DEBT_SERVICE", "0")) or 0
+
+        dscr_model = calculate_dscr_bankability(
+            annual_solar_savings=estimated_year_1_savings or 0,
+            project_cost=estimated_project_cost or 0,
+            property_market_value=property_market_value or 1000000,
+            annual_property_tax=attom_data.get("tax_amount"),
+            loan_interest_rate=clean_number(os.environ.get("SOLAR_LOAN_INTEREST_RATE", "6.5")) or 6.5,
+            loan_term_years=int(clean_number(os.environ.get("SOLAR_LOAN_TERM_YEARS", "20")) or 20),
+            down_payment_pct=clean_number(os.environ.get("SOLAR_DOWN_PAYMENT_PCT", "10")) or 10,
+            existing_noi=existing_noi,
+            existing_debt_service=existing_debt,
+            tax_credit_pct=preliminary_tax_credit_rate or 0.3
         )
 
-        dscr_data = calculate_dscr(
-            financial_text
-        )
+        print("DSCR Model:", json.dumps({k: v for k, v in dscr_model.items() if k != "yearly_savings_25yr"}, indent=2))
 
         # ====================================================
         # REVIEW FLAG
         # ====================================================
+        missing_inputs = []
+        if annual_kwh is None or annual_kwh <= 0:
+            missing_inputs.append("Annual electricity usage")
+        if not property_address:
+            missing_inputs.append("Property address")
+        if annual_production_per_kw is None or annual_production_per_kw <= 0:
+            missing_inputs.append("PVWatts production")
+        if electricity_rate is None or electricity_rate <= 0:
+            missing_inputs.append("Electricity rate")
+        if estimated_project_cost is None or estimated_project_cost <= 0:
+            missing_inputs.append("Project cost")
+        if estimated_year_1_savings is None or estimated_year_1_savings <= 0:
+            missing_inputs.append("Year 1 savings")
 
-        review_flag = "STANDARD"
+        review_notes = []
+        if is_post_solar:
+            review_notes.append("POST-SOLAR BILL DETECTED - True site reconstructed")
+        if is_neg_bill:
+            review_notes.append("NEG BILL - Export > Delivered")
+        if peak_demand_kw and preliminary_system_size_kw and preliminary_system_size_kw > peak_demand_kw:
+            review_notes.append(f"System {preliminary_system_size_kw:.1f}kW > Peak {peak_demand_kw:.1f}kW - Verify")
 
-        if (
-            not bill_data.get("billing_period_kwh")
-            or not property_data.get("owner")
-        ):
-
-            review_flag = "REVIEW"
+        if missing_inputs:
+            underwriting_review_flag = "REVIEW REQUIRED - Missing: " + ", ".join(missing_inputs)
+        elif preliminary_tax_credit_rate is None or estimated_tax_credit is None or estimated_net_project_cost is None:
+            underwriting_review_flag = "PRELIMINARY - INCENTIVE REVIEW REQUIRED"
+        else:
+            base_flag = "PRELIMINARY - PASS"
+            # Add bankability to flag
+            base_flag += f" | {dscr_model.get('bankability_tier')} | DSCR {dscr_model.get('dscr_after_itc'):.2f}x"
+            if review_notes:
+                base_flag += " | " + " | ".join(review_notes)
+            underwriting_review_flag = base_flag
 
         # ====================================================
-        # BANKABILITY
+        # GENERATE PDF
         # ====================================================
-
-        bankability = calculate_bankability(
-            property_data,
-            dscr_data.get("dscr"),
-            bill_data,
-            review_flag
-        )
-
-        # ====================================================
-        # CREATE REPORT
-        # ====================================================
-
-        report_file = tempfile.NamedTemporaryFile(
-            delete=False,
-            suffix=".pdf"
-        )
-
-        report_file.close()
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
+            pdf_output_path = tmp_pdf.name
 
         create_underwriting_pdf(
-            report_file.name,
-            bill_data,
-            geo,
-            solar,
-            financials,
-            property_data,
-            dscr_data,
-            bankability
+            pdf_output_path,
+            property_address,
+            extracted_data.get("utility_provider", ""),
+            preliminary_system_size_kw,
+            estimated_annual_solar_kwh,
+            estimated_project_cost,
+            estimated_year_1_savings,
+            simple_payback_years,
+            estimated_tax_credit,
+            estimated_net_project_cost,
+            estimated_depreciation_tax_savings,
+            incentive_adjusted_payback_years,
+            estimated_year_1_net_economic_benefit,
+            underwriting_review_flag,
+            attom_data=attom_data,
+            dscr_model=dscr_model,
+            annual_kwh=annual_kwh,
+            peak_demand_kw=peak_demand_kw
         )
 
-        # ====================================================
-        # CLOUDINARY
-        # ====================================================
+        # Upload PDF to Cloudinary
+        pdf_url = ""
+        try:
+            upload_result = cloudinary.uploader.upload(pdf_output_path, resource_type="raw", folder="solar_underwriting")
+            pdf_url = upload_result.get("secure_url", "")
+            print("PDF uploaded:", pdf_url)
+        except Exception as e:
+            print("Cloudinary upload error:", e)
+            # Fallback local
+            pdf_url = ""
 
-        report_url = upload_report_to_cloudinary(
-            report_file.name
-        )
+        # ====================================================
+        # GHL UPDATE - WITH ATTOM + DSCR FIELDS
+        # ====================================================
+        ghl_api_key = os.environ.get("GHL_API_KEY")
+        ghl_location_id = os.environ.get("GHL_LOCATION_ID")
 
-        log(
-            "FINAL REPORT",
-            {
-                "report_url": report_url
+        if contact_id and ghl_api_key:
+            ghl_url = f"https://services.leadconnectorhq.com/contacts/{contact_id}"
+            ghl_headers = {
+                "Authorization": f"Bearer {ghl_api_key}",
+                "Content-Type": "application/json",
+                "Version": "2021-07-28"
             }
-        )
 
-        # ====================================================
-        # UPDATE GHL
-        # ====================================================
+            custom_fields = [
+                {"id": "9S0c0p0d0f0g0h0i0j0k", "fieldValue": str(property_address or "")},
+                {"id": "6w3x2y1z0a9b8c7d6e5f", "fieldValue": str(extracted_data.get("utility_provider", "") or "")},
+                {"id": "1a2b3c4d5e6f7g8h9i0j", "fieldValue": str(round(annual_kwh, 2) if annual_kwh else "")},
+                {"id": "2b3c4d5e6f7g8h9i0j1k", "fieldValue": str(round(preliminary_system_size_kw, 2) if preliminary_system_size_kw else "")},
+                {"id": "3c4d5e6f7g8h9i0j1k2l", "fieldValue": str(round(estimated_project_cost, 2) if estimated_project_cost else "")},
+                {"id": "4d5e6f7g8h9i0j1k2l3m", "fieldValue": str(round(estimated_year_1_savings, 2) if estimated_year_1_savings else "")},
+                {"id": "5e6f7g8h9i0j1k2l3m4n", "fieldValue": str(round(simple_payback_years, 2) if simple_payback_years else "")},
+                {"id": "6f7g8h9i0j1k2l3m4n5o", "fieldValue": str(round(estimated_tax_credit, 2) if estimated_tax_credit else "")},
+                {"id": "7g8h9i0j1k2l3m4n5o6p", "fieldValue": str(round(estimated_net_project_cost, 2) if estimated_net_project_cost else "")},
+                {"id": "8h9i0j1k2l3m4n5o6p7q", "fieldValue": str(round(estimated_depreciation_tax_savings, 2) if estimated_depreciation_tax_savings else "")},
+                {"id": "9i0j1k2l3m4n5o6p7q8r", "fieldValue": str(round(incentive_adjusted_payback_years, 2) if incentive_adjusted_payback_years else "")},
+                {"id": "0j1k2l3m4n5o6p7q8r9s", "fieldValue": str(round(estimated_year_1_net_economic_benefit, 2) if estimated_year_1_net_economic_benefit else "")},
+                {"id": "1k2l3m4n5o6p7q8r9s0t", "fieldValue": str(underwriting_review_flag or "")},
 
-        ghl_update = update_ghl_contact(
-            contact_id,
-            report_url,
-            bankability["status"]
-        )
+                # === NEW ATTOM FIELDS ===
+                {"id": "ATTOM_MARKET_VALUE", "fieldValue": str(round(attom_data.get('market_value'), 2) if attom_data.get('market_value') else "")},
+                {"id": "ATTOM_AVM_VALUE", "fieldValue": str(round(attom_data.get('avm_value'), 2) if attom_data.get('avm_value') else "")},
+                {"id": "ATTOM_BUILDING_SQFT", "fieldValue": str(round(attom_data.get('building_sqft'), 2) if attom_data.get('building_sqft') else "")},
+                {"id": "ATTOM_YEAR_BUILT", "fieldValue": str(attom_data.get('year_built') or "")},
+                {"id": "ATTOM_PROPERTY_TYPE", "fieldValue": str(attom_data.get('property_type') or "")},
 
-        # ====================================================
-        # CLEANUP
-        # ====================================================
+                # === NEW DSCR BANKABILITY FIELDS ===
+                {"id": "DSCR_SOLAR_ONLY", "fieldValue": str(round(dscr_model.get('dscr_solar_only'), 2) if dscr_model.get('dscr_solar_only') else "")},
+                {"id": "DSCR_AFTER_ITC", "fieldValue": str(round(dscr_model.get('dscr_after_itc'), 2) if dscr_model.get('dscr_after_itc') else "")},
+                {"id": "DSCR_COMBINED", "fieldValue": str(round(dscr_model.get('dscr_combined'), 2) if dscr_model.get('dscr_combined') else "")},
+                {"id": "DSCR_LTV", "fieldValue": str(round(dscr_model.get('ltv'), 2) if dscr_model.get('ltv') else "")},
+                {"id": "DSCR_LOAN_AMOUNT", "fieldValue": str(round(dscr_model.get('loan_amount'), 2) if dscr_model.get('loan_amount') else "")},
+                {"id": "DSCR_MONTHLY_PAYMENT", "fieldValue": str(round(dscr_model.get('monthly_payment'), 2) if dscr_model.get('monthly_payment') else "")},
+                {"id": "DSCR_ANNUAL_DEBT", "fieldValue": str(round(dscr_model.get('annual_debt_service_solar'), 2) if dscr_model.get('annual_debt_service_solar') else "")},
+                {"id": "DSCR_BANKABILITY_SCORE", "fieldValue": str(dscr_model.get('bankability_score') or "")},
+                {"id": "DSCR_BANKABILITY_TIER", "fieldValue": str(dscr_model.get('bankability_tier') or "")},
+                {"id": "DSCR_APPROVAL_ODDS", "fieldValue": str(dscr_model.get('approval_odds') or "")},
+                {"id": "DSCR_LIFETIME_SAVINGS", "fieldValue": str(round(dscr_model.get('lifetime_savings_25yr'), 2) if dscr_model.get('lifetime_savings_25yr') else "")},
+                {"id": "DSCR_ROI_25YR", "fieldValue": str(round(dscr_model.get('roi_25yr_pct'), 2) if dscr_model.get('roi_25yr_pct') else "")},
+                {"id": "DSCR_RISK_FACTORS", "fieldValue": "; ".join(dscr_model.get('risk_factors', []))},
 
-        try:
-            os.remove(pdf_path)
-        except Exception:
-            pass
+                {"id": "CecrcV1MWS03t6HpkCVu", "fieldValue": (
+                    f"PRELIMINARY COMMERCIAL SOLAR UNDERWRITING + BANKABILITY\n"
+                    f"System Size: {round(preliminary_system_size_kw, 2) if preliminary_system_size_kw else 'N/A'} kW\n"
+                    f"Annual Usage (True): {round(annual_kwh, 2) if annual_kwh else 'N/A'} kWh\n"
+                    f"Property Value (ATTOM): ${round(attom_data.get('market_value'), 2) if attom_data.get('market_value') else 'N/A'}\n"
+                    f"Project Cost: ${round(estimated_project_cost, 2) if estimated_project_cost else 'N/A'}\n"
+                    f"Year 1 Savings: ${round(estimated_year_1_savings, 2) if estimated_year_1_savings else 'N/A'}\n"
+                    f"Simple Payback: {round(simple_payback_years, 2) if simple_payback_years else 'N/A'} years\n"
+                    f"DSCR (After ITC): {round(dscr_model.get('dscr_after_itc'), 2) if dscr_model.get('dscr_after_itc') else 'N/A'}x\n"
+                    f"LTV: {round(dscr_model.get('ltv'), 1) if dscr_model.get('ltv') else 'N/A'}%\n"
+                    f"Bankability: {dscr_model.get('bankability_tier')} ({dscr_model.get('bankability_score')}/100)\n"
+                    f"Approval Odds: {dscr_model.get('approval_odds')}\n"
+                    f"25yr Savings: ${round(dscr_model.get('lifetime_savings_25yr'), 2) if dscr_model.get('lifetime_savings_25yr') else 'N/A'}\n"
+                    f"Review: {underwriting_review_flag}\n"
+                )},
+                {"id": "2GuvXtwQspvVj15flrod", "fieldValue": pdf_url if pdf_url else ""}
+            ]
 
-        try:
-            os.remove(report_file.name)
-        except Exception:
-            pass
+            ghl_payload = {"customFields": custom_fields}
+            ghl_response = requests.put(ghl_url, headers=ghl_headers, json=ghl_payload, timeout=30)
+            print("GHL Update:", ghl_response.status_code, ghl_response.text[:500])
 
-        # ====================================================
-        # SUCCESS
-        # ====================================================
-
+        # FINAL RESPONSE - WITH DSCR
         return jsonify({
-            "success": True,
-            "message": "Commercial solar underwriting completed.",
-            "contact_id": contact_id,
-            "bill_received": True,
-            "bill_url": bill_url,
-            "bill_data": bill_data,
-            "geocoding": geo,
-            "solar": {
-                "annual_solar_kwh":
-                    solar.get("annual_solar_kwh")
+            "status": "success",
+            "utility_bill_url": bill_url,
+            "extracted_data": extracted_data,
+            "usage_calculation": {"annual_kwh": annual_kwh, "current_period_kwh": current_period_kwh, "source": usage_source, "is_post_solar": is_post_solar},
+            "solar": {"latitude": latitude, "longitude": longitude, "pvwatts_annual_production_per_kw": annual_production_per_kw, "system_size_kw": preliminary_system_size_kw, "annual_solar_kwh": estimated_annual_solar_kwh},
+            "financial_underwriting": {
+                "project_cost": estimated_project_cost,
+                "year_1_savings": estimated_year_1_savings,
+                "simple_payback": simple_payback_years,
+                "tax_credit": estimated_tax_credit,
+                "net_project_cost": estimated_net_project_cost,
+                "depreciation_benefit": estimated_depreciation_benefit,
+                "depreciation_tax_savings": estimated_depreciation_tax_savings,
+                "year_1_net_economic_benefit": estimated_year_1_net_economic_benefit,
+                "incentive_adjusted_payback": incentive_adjusted_payback_years
             },
-            "financials": financials,
-            "property": property_data,
-            "dscr": dscr_data,
-            "bankability": bankability,
-            "report_url": report_url,
-            "ghl_update": ghl_update
+            "attom": attom_data,
+            "dscr_bankability": dscr_model,
+            "review_status": underwriting_review_flag,
+            "pdf_url": pdf_url
         })
 
     except Exception as e:
-
-        log(
-            "!!!!!!!! WEBHOOK ERROR !!!!!!!!",
-            {
-                "error": str(e),
-                "traceback": traceback.format_exc()
-            }
-        )
-
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
-
-
-# ============================================================
-# LOCAL / RENDER START
-# ============================================================
+        print("FATAL WEBHOOK ERROR:", str(e))
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
-
-    port = int(
-        os.environ.get(
-            "PORT",
-            5000
-        )
-    )
-
-    app.run(
-        host="0.0.0.0",
-        port=port
-    )
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
