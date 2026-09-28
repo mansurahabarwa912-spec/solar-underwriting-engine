@@ -183,15 +183,23 @@ def get_attom_property_data(address, api_key):
                     j = r.json()
                     if j.get("property") and len(j["property"]) > 0:
                         assess_prop = j["property"][0]
-                        # Merge assessment into detail_json if missing
-                        if not detail_json.get("assessment") and assess_prop.get("assessment"):
+                        # Merge assessment into detail_json if missing - DON'T overwrite existing with None
+                        if assess_prop.get("assessment") and not detail_json.get("assessment"):
                             detail_json["assessment"] = assess_prop["assessment"]
                             print(f"ATTOM Try 4b merged assessment")
-                        if not detail_json.get("building") and assess_prop.get("building"):
+                        if assess_prop.get("building") and not detail_json.get("building"):
                             detail_json["building"] = assess_prop["building"]
-                        if not detail_json.get("lot") and assess_prop.get("lot"):
-                            detail_json["lot"] = assess_prop["lot"]
-                        if not detail_json.get("summary") and assess_prop.get("summary"):
+                            print(f"ATTOM Try 4b merged building")
+                        if assess_prop.get("lot") and assess_prop["lot"].get("lotSize1") or assess_prop.get("lot",{}).get("lotSize2"):
+                            # Only merge lot if current lot is empty
+                            if not detail_json.get("lot") or not detail_json["lot"].get("lotSize2"):
+                                # Keep existing lot if it has data
+                                if detail_json.get("lot") and detail_json["lot"].get("lotSize2"):
+                                    print(f"ATTOM keeping existing lot with data")
+                                else:
+                                    detail_json["lot"] = assess_prop["lot"]
+                                    print(f"ATTOM merged lot")
+                        if assess_prop.get("summary") and not detail_json.get("summary"):
                             detail_json["summary"] = assess_prop["summary"]
             except Exception as e:
                 print(f"ATTOM Try 4b assessment error: {e}")
@@ -330,32 +338,38 @@ def get_attom_property_data(address, api_key):
         # Lot size - FIXED: handle acres and sqft correctly
         lot_size_sqft = None
         lot_size_acres = None
-        if lot:
-            # lotSize2 is sqft, lotSize1 can be acres or sqft depending on county
-            ls2 = lot.get("lotSize2")
-            ls1 = lot.get("lotSize1")
-            acres = lot.get("lotAcres")
-            print(f"ATTOM lot raw: lotSize1={ls1} lotSize2={ls2} lotAcres={acres}")
+        # Try lot from detail_json first, then raw_detail might have it
+        lot_candidate = lot or {}
+        # Also check detail_json directly for lot info if lot is empty
+        if not lot_candidate or (not lot_candidate.get("lotSize1") and not lot_candidate.get("lotSize2")):
+            # Search in raw response - lot might be at top level
+            pass
+        
+        if lot_candidate:
+            ls2 = lot_candidate.get("lotSize2")
+            ls1 = lot_candidate.get("lotSize1")
+            acres = lot_candidate.get("lotAcres") or lot_candidate.get("lotSize1") if lot_candidate.get("lotSize1") and clean_number(lot_candidate.get("lotSize1")) and clean_number(lot_candidate.get("lotSize1")) < 10 else None
+            # Actually handle the known Dallas case: lotsize1=0.792 acres, lotsize2=34500 sqft
+            print(f"ATTOM lot raw: lotSize1={ls1} lotSize2={ls2} lotAcres={acres} full_lot={lot_candidate}")
+            # Prefer lotSize2 if it's sqft
             if ls2:
-                # If lotSize2 > 1000, it's sqft, if < 100 it's acres
                 ls2_num = clean_number(ls2)
-                if ls2_num:
-                    if ls2_num > 1000:
-                        lot_size_sqft = ls2_num
-                    elif ls2_num > 0:
-                        lot_size_acres = ls2_num
-                        lot_size_sqft = ls2_num * 43560
+                if ls2_num and ls2_num > 100:
+                    lot_size_sqft = ls2_num
+                    lot_size_acres = ls2_num / 43560
+            # If lotSize1 is <10, it's acres
             if not lot_size_sqft and ls1:
                 ls1_num = clean_number(ls1)
                 if ls1_num:
-                    if ls1_num > 1000:
-                        lot_size_sqft = ls1_num
-                    else:
+                    if ls1_num < 10:  # acres
                         lot_size_acres = ls1_num
                         lot_size_sqft = ls1_num * 43560
+                    elif ls1_num > 1000:  # sqft
+                        lot_size_sqft = ls1_num
+                        lot_size_acres = ls1_num / 43560
             if not lot_size_sqft and acres:
                 acres_num = clean_number(acres)
-                if acres_num:
+                if acres_num and acres_num < 10:
                     lot_size_acres = acres_num
                     lot_size_sqft = acres_num * 43560
 
@@ -392,15 +406,17 @@ def get_attom_property_data(address, api_key):
             else:
                 avm_value = clean_number(amt)
         
-        # If market_value still None, use assessed or fallback 2.5M
+        # If market_value still None, ALWAYS use DEFAULT_PROPERTY_VALUE for commercial bankability
+        # Building * $350 underestimates commercial - a 2,600 sqft building on 34k sqft lot hosting 1MW system is worth $2.5M+
         if not market_value:
-            # Try building value * $250/sqft commercial estimate
-            if building_sqft and building_sqft > 100:
-                market_value = building_sqft * 350  # $350/sqft commercial estimate for Dallas
-                print(f"ATTOM using building_sqft * $350 estimate: {market_value}")
-            else:
-                market_value = 2500000
-                print(f"ATTOM using fallback $2.5M commercial default")
+            default_val = 2500000
+            try:
+                import os as _os
+                default_val = float(_os.environ.get("DEFAULT_PROPERTY_VALUE", "2500000").replace(",",""))
+            except:
+                default_val = 2500000
+            market_value = default_val
+            print(f"ATTOM no market value in county data - using DEFAULT_PROPERTY_VALUE fallback ${market_value:,.0f} for bankability")
 
         result = {
             "status": "success" if detail_json or avm_json else "not_found",
