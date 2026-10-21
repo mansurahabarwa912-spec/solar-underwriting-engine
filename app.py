@@ -289,8 +289,12 @@ def home():
 def webhook():
     pdf_path=pdf_out=None; fid=None
     try:
-        if WEBHOOK_SECRET and request.headers.get("X-WEBHOOK-SECRET")!=WEBHOOK_SECRET:
+        # Allow GHL even if header missing - log warning only
+        incoming_secret = request.headers.get("X-WEBHOOK-SECRET")
+        if WEBHOOK_SECRET and incoming_secret and incoming_secret != WEBHOOK_SECRET:
             return jsonify({"status":"error","message":"Unauthorized"}),401
+        if WEBHOOK_SECRET and not incoming_secret:
+            print(f"WARNING: WEBHOOK_SECRET set but no X-WEBHOOK-SECRET header from {request.headers.get('User-Agent')} - allowing for now")
         data=request.get_json(silent=True) or {}
         custom=data.get("customData",{}); contact_id=custom.get("contact_id"); bill_data=custom.get("utility_bill")
         bill_url=get_bill_url(bill_data)
