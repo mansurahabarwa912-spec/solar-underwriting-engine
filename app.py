@@ -1,13 +1,12 @@
 from flask import Flask, request, jsonify
-from openai import OpenAI
 import os
-import json
 import requests
 import tempfile
 import re
 from datetime import datetime
 import cloudinary
 import cloudinary.uploader
+from pypdf import PdfReader # type: ignore
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib import colors
@@ -16,7 +15,7 @@ from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
 
 app = Flask(__name__)
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY")) if os.environ.get("OPENAI_API_KEY") else None
+
 cloudinary.config(
     cloud_name=os.environ.get("CLOUDINARY_CLOUD_NAME"),
     api_key=os.environ.get("CLOUDINARY_API_KEY"),
@@ -131,7 +130,7 @@ def calc_battery(peak_kw):
     batt_cost=batt_energy*cost_kwh; demand_sav=batt_power*8.50*12; arb_sav=batt_energy*18; net_sav=demand_sav+arb_sav*LF105["roundtrip_eff"]
     return {"battery_power_kw":batt_power,"battery_energy_kwh":batt_energy,"cells_needed":cells,"modules_needed":round(modules,1),"battery_cost":batt_cost,"demand_savings":demand_sav,"arbitrage_savings":arb_sav,"net_battery_savings":net_sav,"cell_model":"EVE LF105 105Ah","cell_kwh":LF105["cell_kwh"],"module_kwh":LF105["module_kwh"],"cycles":LF105["cycles"],"ir_mohm":LF105["ir_mohm"]}
 
-# ===== FIXED PDF - NO BLUR =====
+# ===== SHARP PDF - FIXES BLURRY lrl.png =====
 def create_pdf(output_path, property_address, utility_provider, system_size_kw, annual_solar_kwh, project_cost, year_1_savings, simple_payback, tax_credit, net_project_cost, review_flag, attom_data=None, dscr_model=None, dscr_storage_model=None, battery=None, annual_kwh=None, peak_demand_kw=None):
     styles=getSampleStyleSheet()
     cell_style=ParagraphStyle('cell', parent=styles['Normal'], fontSize=9, leading=12, alignment=TA_LEFT)
@@ -142,7 +141,7 @@ def create_pdf(output_path, property_address, utility_provider, system_size_kw, 
     doc=SimpleDocTemplate(output_path,pagesize=letter,rightMargin=0.6*inch,leftMargin=0.6*inch,topMargin=0.6*inch,bottomMargin=0.6*inch)
     story=[]
     story.append(Paragraph("PRELIMINARY SOLAR + STORAGE UNDERWRITING - EVE LF105 105Ah", title_style))
-    story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')} | EVE Energy LF105 105Ah LFP Cell | M4/M6 Threaded | 5000 Cycles", sub_style))
+    story.append(Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')} | EVE Energy LF105 105Ah LFP Cell | 5000 Cycles", sub_style))
     story.append(Spacer(1,12))
 
     def make_row(label, value):
@@ -156,7 +155,7 @@ def create_pdf(output_path, property_address, utility_provider, system_size_kw, 
 
     if battery:
         story.append(Paragraph("<b>2. BATTERY STORAGE - EVE LF105 105Ah LFP Cell</b>", styles["Heading2"]))
-        batt_rows=[make_row("Cell Model", f"{battery['cell_model']} - EVE Energy Stock 300014"), make_row("Cell Spec", f"105Ah / 3.2V / {battery['cell_kwh']}kWh / {battery['ir_mohm']}mΩ IR / 5000 Cycles"), make_row("System Size", f"{battery['battery_power_kw']:.1f} kW / {battery['battery_energy_kwh']:.1f} kWh (2hr)"), make_row("Cells Required", f"{battery['cells_needed']} cells = {battery['modules_needed']} x 16S modules"), make_row("Battery Cost", f"${battery['battery_cost']:,.0f} @ ${LF105['cost_per_kwh']}/kWh"), make_row("Demand Savings", f"${battery['demand_savings']:,.0f}/yr"), make_row("Net Battery Savings", f"${battery['net_battery_savings']:,.0f}/yr")]
+        batt_rows=[make_row("Cell Model", f"{battery['cell_model']} - EVE Energy"), make_row("Cell Spec", f"105Ah / 3.2V / {battery['cell_kwh']}kWh / {battery['ir_mohm']}mΩ IR / 5000 Cycles"), make_row("System Size", f"{battery['battery_power_kw']:.1f} kW / {battery['battery_energy_kwh']:.1f} kWh (2hr)"), make_row("Cells Required", f"{battery['cells_needed']} cells = {battery['modules_needed']} x 16S modules"), make_row("Battery Cost", f"${battery['battery_cost']:,.0f} @ ${LF105['cost_per_kwh']}/kWh"), make_row("Demand Savings", f"${battery['demand_savings']:,.0f}/yr"), make_row("Net Battery Savings", f"${battery['net_battery_savings']:,.0f}/yr")]
         t=Table(batt_rows,colWidths=[2.0*inch,4.5*inch])
         t.setStyle(TableStyle([("GRID",(0,0),(-1,-1),0.5,colors.grey),("BACKGROUND",(0,0),(0,-1),colors.HexColor("#E0F2F1")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6),("LEFTPADDING",(0,0),(-1,-1),8)]))
         story.append(t); story.append(Spacer(1,16))
@@ -185,26 +184,26 @@ def create_pdf(output_path, property_address, utility_provider, system_size_kw, 
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"status":"online","version":"V8_SHARP_PDF_LF105","message":"Fixed blurry PDF"})
+    return jsonify({"status":"online","version":"V10_NO_FITZ_SHARP_PDF","message":"V10 - No fitz error, sharp PDF with pypdf"})
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
     pdf_path=None; pdf_out=None
-    print("=== WEBHOOK HIT ===")
+    print("=== WEBHOOK HIT V10 ===")
     incoming_secret=request.headers.get("X-WEBHOOK-SECRET") or request.headers.get("x-webhook-secret")
     if WEBHOOK_SECRET:
         if not incoming_secret: print(f"WARNING: WEBHOOK_SECRET set ({WEBHOOK_SECRET}) but no header - allowing")
-        elif incoming_secret.strip()!=WEBHOOK_SECRET: print(f"401 mismatch"); return jsonify({"status":"error","message":"Invalid secret"}),401
+        elif incoming_secret.strip()!=WEBHOOK_SECRET: return jsonify({"status":"error","message":"Invalid secret"}),401
         else: print(f"Secret OK: {incoming_secret}")
     try:
         data=request.get_json(silent=True) or {}
-        # GHL sends flat keys, not just customData - handle both
         custom=data.get("customData",{})
-        contact_id=data.get("contact_id") or custom.get("contact_id")
+        contact_id=data.get("contact_id") or custom.get("contact_id") or data.get("contact",{}).get("id")
         bill_data=data.get("utility_bill") or custom.get("utility_bill")
         bill_url=get_bill_url(bill_data)
         print(f"Bill URL: {bill_url} Contact: {contact_id}")
-        if not bill_url: return jsonify({"status":"success","message":"No bill URL - test OK"}),200
+        if not bill_url: return jsonify({"status":"success","message":"No bill URL - test OK, GHL connected"}),200
+
         r=requests.get(bill_url,timeout=30,stream=True)
         if r.status_code!=200: return jsonify({"status":"error","message":f"Download failed {r.status_code}"}),400
         content=b""
@@ -212,17 +211,22 @@ def webhook():
             content+=chunk
             if len(content)>MAX_BILL_SIZE_MB*1024*1024: return jsonify({"status":"error","message":"Too large"}),400
         with tempfile.NamedTemporaryFile(suffix=".pdf",delete=False) as tf: tf.write(content); pdf_path=tf.name
+        print(f"PDF saved: {pdf_path} size {len(content)}")
+
+        # V10 - ONLY pypdf, NO fitz import at all - FIXES "No module named fitz"
         extracted={"annual_kwh_usage":"1500000","peak_demand_kw":"350","property_address":"1000 Market Place Blvd, Irving, TX 75063","utility_provider":"Oncor","billing_period":"Jan 2025"}
         try:
-            import fitz
-            doc=fitz.open(pdf_path); text=""
-            for page in doc: text+=page.get_text()
-            print(f"PDF text OK length {len(text)}")
+            reader=PdfReader(pdf_path)
+            text=""
+            for page in reader.pages:
+                text+=page.extract_text() or ""
+            print(f"Used pypdf - text length {len(text)} - sample: {text[:600]}")
             m=re.search(r"(\d{1,3},?\d{3},?\d*)\s*kWh",text,re.I)
             if m: extracted["annual_kwh_usage"]=m.group(1).replace(",","")
             m2=re.search(r"(\d+\.?\d*)\s*kW",text,re.I)
             if m2: extracted["peak_demand_kw"]=m2.group(1)
-        except Exception as e: print(f"Text extract error (using fallback): {e}")
+        except Exception as e:
+            print(f"Text extract error (using fallback): {e}")
 
         annual_kwh=clean_number(extracted.get("annual_kwh_usage")) or 1500000
         peak_kw=clean_number(extracted.get("peak_demand_kw")) or 350
@@ -254,8 +258,7 @@ def webhook():
         with tempfile.NamedTemporaryFile(suffix=".pdf",delete=False) as tmp: pdf_out=tmp.name
         create_pdf(pdf_out,property_address,utility_provider,sys_kw,annual_solar,proj_cost,y1_sav,payback,tax_credit,net_cost,review,attom_data=attom,dscr_model=dscr,dscr_storage_model=dscr_storage,battery=battery,annual_kwh=annual_kwh,peak_demand_kw=peak_kw)
         pdf_url=""
-        try:
-            up=cloudinary.uploader.upload(pdf_out,resource_type="raw",folder="solar_underwriting"); pdf_url=up.get("secure_url",""); print(f"PDF uploaded: {pdf_url}")
+        try: up=cloudinary.uploader.upload(pdf_out,resource_type="raw",folder="solar_underwriting"); pdf_url=up.get("secure_url",""); print(f"PDF uploaded: {pdf_url}")
         except Exception as e: print(f"Cloudinary error: {e}")
         ghl_api=os.environ.get("GHL_API_KEY")
         if contact_id and ghl_api:
@@ -263,7 +266,7 @@ def webhook():
             cf=[{"id":GHL_IDS["utility_provider"],"fieldValue":str(utility_provider or "")},{"id":GHL_IDS["annual_kwh"],"fieldValue":str(round(annual_kwh,2))},{"id":GHL_IDS["peak_demand"],"fieldValue":str(round(peak_kw,2))},{"id":GHL_IDS["property_address"],"fieldValue":str(property_address or "")},{"id":GHL_IDS["system_size"],"fieldValue":str(round(sys_kw,2))},{"id":GHL_IDS["annual_solar_production"],"fieldValue":str(round(annual_solar,2))},{"id":GHL_IDS["production_per_kw"],"fieldValue":str(round(annual_prod_per_kw,2))},{"id":GHL_IDS["electricity_rate"],"fieldValue":str(total_rate)},{"id":GHL_IDS["tax_credit_rate"],"fieldValue":str(round(itc_rate*100,2))},{"id":GHL_IDS["estimated_tax_credit"],"fieldValue":str(round(tax_credit,2))},{"id":GHL_IDS["net_project_cost"],"fieldValue":str(round(net_cost,2))},{"id":GHL_IDS["depreciation_benefit"],"fieldValue":str(round(dep_benefit,2))},{"id":GHL_IDS["depreciation_tax_savings"],"fieldValue":str(round(dep_tax_sav,2))},{"id":GHL_IDS["year1_net_benefit"],"fieldValue":str(round(y1_net,2))},{"id":GHL_IDS["incentive_payback_1"],"fieldValue":str(round(inc_payback,2))},{"id":GHL_IDS["incentive_payback_2"],"fieldValue":str(round(inc_payback,2))},{"id":GHL_IDS["review_flag"],"fieldValue":str(review or "")},{"id":GHL_IDS["market_value"],"fieldValue":str(round(prop_val,2))},{"id":GHL_IDS["bankability_tier"],"fieldValue":str((dscr_storage or dscr).get('bankability_tier') or "")},{"id":GHL_IDS["bankability_score"],"fieldValue":str((dscr_storage or dscr).get('bankability_score') or "")},{"id":GHL_IDS["dscr_after_itc"],"fieldValue":str(round((dscr_storage or dscr).get('dscr_after_itc'),2) if (dscr_storage or dscr).get('dscr_after_itc') else "")},{"id":GHL_IDS["pdf_url_new"],"fieldValue":pdf_url or ""},{"id":GHL_IDS["pdf_url_old"],"fieldValue":pdf_url or ""},{"id":GHL_IDS["ai_summary"],"fieldValue":f"SOLAR+STORAGE LF105: Solar {round(sys_kw,2)}kW | Usage {round(annual_kwh,2)}kWh | Peak {round(peak_kw,1)}kW | Battery {battery['battery_power_kw']:.1f}kW/{battery['battery_energy_kwh']:.1f}kWh LF105 ({battery['cells_needed']} cells) | DSCR {round(dscr.get('dscr_after_itc'),2)}x -> {round(dscr_storage.get('dscr_after_itc'),2) if dscr_storage else 'N/A'}x | Tier {(dscr_storage or dscr).get('bankability_tier')}" if battery else f"SOLAR: {round(sys_kw,2)}kW | DSCR {round(dscr.get('dscr_after_itc'),2)}x"}]
             try: r2=requests.put(url,headers=hdr,json={"customFields":cf},timeout=15); print(f"GHL Update: {r2.status_code}")
             except Exception as e: print(f"GHL error: {e}")
-        print("=== SUCCESS 200 ===")
+        print("=== SUCCESS 200 V10 ===")
         return jsonify({"status":"success","battery":battery,"dscr_solar":dscr,"dscr_storage":dscr_storage,"pdf_url":pdf_url,"review":review})
     except Exception as e:
         import traceback; traceback.print_exc(); print(f"ERROR: {e}"); return jsonify({"status":"error","message":str(e)}),500
@@ -275,3 +278,5 @@ def webhook():
 
 if __name__=="__main__":
     app.run(host="0.0.0.0",port=int(os.environ.get("PORT",10000)))
+
+
